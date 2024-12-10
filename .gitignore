@@ -1,0 +1,20 @@
+build
+CMakeFiles
+CMakeCache.txt
+.vscode
+# Start of C++ ignore patterns
+*.o
+*.d
+*.so
+*.so.*
+*.a
+*.la
+*.lo
+*.lai
+*.al
+*.ninja
+*.slo
+*.loT
+*.oT
+*.dSYM
+*.swp
