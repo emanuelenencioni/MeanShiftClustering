@@ -9,16 +9,6 @@
 
 
 
-cv::Mat getOpencvImage1c(unsigned char* image, uint16_t height, uint16_t width) {
-    cv::Mat opencv_image(cv::Size(width, height), CV_8UC1); 
-
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-                opencv_image.at<unsigned char>(y, x) = image[y*width + x];
-            }
-        }
-    return opencv_image;
-}
 
 
 int main(int argc, char* argv[]){

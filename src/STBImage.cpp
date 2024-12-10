@@ -27,13 +27,14 @@ cv::Mat STBImageToCVMat(STBImage image) {
         for (int x = 0; x < image.width; x++) {
             stb_pixel = &image.rgb_image[(y * image.width*image.channels) + (x * image.channels)];
             
-                unsigned char r, g, b;
-                r = stb_pixel[0];
-                g = stb_pixel[1];
-                b = stb_pixel[2];
+            unsigned char r, g, b;
+            // BGR stored, not RGB, REMEMBER
+            b = stb_pixel[0];
+            g = stb_pixel[1];
+            r = stb_pixel[2];
 
-                cv::Vec3b opencv_pixel(r, g, b);
-                opencv_image.at<cv::Vec3b>(y, x) = opencv_pixel;
+            cv::Vec3b opencv_pixel(r, g, b); 
+            opencv_image.at<cv::Vec3b>(y, x) = opencv_pixel;
         }
     }   return opencv_image;
 }

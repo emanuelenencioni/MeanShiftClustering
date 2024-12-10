@@ -1,10 +1,8 @@
 
-#include <opencv2/opencv.hpp>
-
-
 
 #ifndef STBIMAGE_H
 #define STBIMAGE_H
+#include <opencv2/opencv.hpp>
 /*
 * Wrapper around STBImage lib.
 *
