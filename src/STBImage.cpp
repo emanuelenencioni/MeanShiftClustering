@@ -1,4 +1,8 @@
 #include "STBImage.h"
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image.h"
+#include "stb_image_write.h"
 
 bool STBImage::loadImage(const std::string &name) {
         rgb_image = stbi_load(name.c_str(), &width, &height, &channels, 3);
