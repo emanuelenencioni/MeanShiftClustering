@@ -6,4 +6,6 @@ Mean Shift Clustering is a non-parametric feature-space analysis technique. It i
 - [ ] Implement Mean Shift Clustering
 - [ ] Test with AoS
 - [ ] Test with SoA
+- [ ] check per false sharing
 - [ ] create openmp version of MSC
+- [ ] Implementazione immagine con std::vector al posto del classico vettore
