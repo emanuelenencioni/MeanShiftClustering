@@ -1,8 +1,10 @@
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <opencv2/opencv.hpp>
 #include "STBImage.h"
@@ -22,6 +24,12 @@ int main(int argc, char* argv[]) {
         printUsage(argv[0]);
         return 1;
     }
+
+    std::time_t now_t = std::time(nullptr);
+    std::tm* tm_info = std::localtime(&now_t);
+    char ts_buf[16];
+    std::strftime(ts_buf, sizeof(ts_buf), "%y%m%d_%H%M%S", tm_info);
+    std::string timestamp(ts_buf);
 
     // Strip --pbar from argv before positional parsing
     bool show_pbar = false;
@@ -84,7 +92,11 @@ int main(int argc, char* argv[]) {
     cv::Mat result_mat = vectorToCVMat(data, image.width, image.height);
 
     namespace fs = std::filesystem;
-    std::string output_path = fs::path(image_path).stem().string() + "_result.png";
+    fs::path input_p(image_path);
+    fs::path out_dir = input_p.parent_path();
+    std::string stem = input_p.stem().string();
+    std::string output_path = (out_dir / (stem + "_" + timestamp + "_result.png")).string();
+    std::string log_path    = (out_dir / (stem + "_" + timestamp + "_result.log")).string();
     cv::imwrite(output_path, result_mat);
     auto t_out_end = clock::now();
 
@@ -105,6 +117,32 @@ int main(int argc, char* argv[]) {
     std::cout << "  Total:             " << ms(t_total_start, t_total_end) << " ms" << std::endl;
     std::cout << "  Iterations:        " << result.iterations << std::endl;
     std::cout << "\nResult saved to: " << output_path << std::endl;
+
+    {
+        std::ofstream log(log_path);
+        log << "[Image]\n";
+        log << "  file:    " << image_path << "\n";
+        log << "  size:    " << image.width << "x" << image.height
+            << "  (" << image.width * image.height << " pixels)\n";
+        log << "\n[Algorithm]\n";
+        log << "  method:     " << algorithm << "\n";
+        log << "  bandwidth:  " << bandwidth << "\n";
+        log << "  max_iter:   " << max_iter << "\n";
+        log << "  tolerance:  " << 1e-3f << "\n";
+        log << "\n[Output]\n";
+        log << "  image:   " << output_path << "\n";
+        log << "\n[Timing]\n";
+        log << "  Image load:        " << ms(t_load_start, t_load_end) << " ms\n";
+        log << "  Data conversion:   " << ms(t_conv_start, t_conv_end) << " ms\n";
+        log << "  Mean shift total:  " << ms(t_ms_start, t_ms_end) << " ms\n";
+        if(algorithm == "grid")
+            log << "    Grid build:      " << result.grid_build_ms << " ms\n";
+        log << "    Pixel shifting:  " << result.pixel_shift_ms << " ms\n";
+        log << "  Result conversion: " << ms(t_out_start, t_out_end) << " ms\n";
+        log << "  Total:             " << ms(t_total_start, t_total_end) << " ms\n";
+        log << "  Iterations:        " << result.iterations << "\n";
+    }
+    std::cout << "Log saved to:    " << log_path << std::endl;
 
     if(image_ref.empty()) {
         std::cerr << "OpenCV could not load reference image for display" << std::endl;

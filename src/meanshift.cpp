@@ -122,7 +122,7 @@ MeanShiftResult meanShiftOptimized(std::vector<uint8_t>& data, float bandwidth,
     double total_grid_ms = 0.0;
     double total_shift_ms = 0.0;
     int iter = 0;
-
+    // Probably PRAGMA here for parallelization in future
     for(; iter < max_iter; ++iter) {
         std::vector<float> next(current.size());
         float max_change = 0.0f;
@@ -130,6 +130,7 @@ MeanShiftResult meanShiftOptimized(std::vector<uint8_t>& data, float bandwidth,
         auto t_grid_start = clock::now();
 
         std::unordered_map<Bin, std::vector<int>> grid;
+        // maybe parallelize this loop in future, but need to be careful about concurrent writes to grid
         for(int j = 0; j < n_pixels; ++j) {
             const float* p = &current[j * 3];
             Bin b{static_cast<int>(p[0] / bandwidth),
@@ -142,7 +143,7 @@ MeanShiftResult meanShiftOptimized(std::vector<uint8_t>& data, float bandwidth,
         total_grid_ms += std::chrono::duration<double, std::milli>(t_grid_end - t_grid_start).count();
 
         auto t_shift_start = clock::now();
-
+        // parallelize this loop in future, but need to be careful about concurrent writes to next and max_change
         for(int i = 0; i < n_pixels; ++i) {
             const float* src = &current[i * 3];
             float sum[3] = {0.0f, 0.0f, 0.0f};
