@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
-static void printProgressBar(int iter, int max_iter, float max_change) {
+void printProgressBar(int iter, int max_iter, float max_change) {
     const int bar_width = 30;
     float progress = static_cast<float>(iter) / max_iter;
     int filled = static_cast<int>(progress * bar_width);
@@ -24,13 +24,13 @@ float squaredDistance(const float* a, const float* b) {
     return sum;
 }
 
-static void convertToFloat(const std::vector<uint8_t>& data, std::vector<float>& out) {
+void convertToFloat(const std::vector<uint8_t>& data, std::vector<float>& out) {
     out.resize(data.size());
     for(size_t i = 0; i < data.size(); ++i)
         out[i] = static_cast<float>(data[i]);
 }
 
-static void convertFromFloat(const std::vector<float>& current, std::vector<uint8_t>& data) {
+void convertFromFloat(const std::vector<float>& current, std::vector<uint8_t>& data) {
     for(size_t i = 0; i < data.size(); ++i) {
         float val = std::max(0.0f, std::min(current[i], 255.0f));
         data[i] = static_cast<uint8_t>(std::round(val));
@@ -50,6 +50,7 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
 
     double total_shift_ms = 0.0;
     int iter = 0;
+    std::vector<IterationInfo> iter_details;
 
     for(; iter < max_iter; ++iter) {
         std::vector<float> next(current.size());
@@ -89,7 +90,9 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
         }
 
         auto t_shift_end = clock::now();
-        total_shift_ms += std::chrono::duration<double, std::milli>(t_shift_end - t_shift_start).count();
+        double iter_ms = std::chrono::duration<double, std::milli>(t_shift_end - t_shift_start).count();
+        total_shift_ms += iter_ms;
+        iter_details.push_back({iter + 1, iter_ms, max_change});
 
         current.swap(next);
 
@@ -105,7 +108,7 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
 
     convertFromFloat(current, data);
 
-    return MeanShiftResult{iter + 1, 0.0, total_shift_ms};
+    return MeanShiftResult{static_cast<int>(iter_details.size()), 0.0, total_shift_ms, iter_details};
 }
 
 // Grid-accelerated: O(n) amortized per iteration via spatial hashing
@@ -122,11 +125,13 @@ MeanShiftResult meanShiftOptimized(std::vector<uint8_t>& data, float bandwidth,
     double total_grid_ms = 0.0;
     double total_shift_ms = 0.0;
     int iter = 0;
-    // Probably PRAGMA here for parallelization in future
+    std::vector<IterationInfo> iter_details;
+
     for(; iter < max_iter; ++iter) {
         std::vector<float> next(current.size());
         float max_change = 0.0f;
 
+        auto t_iter_start = clock::now();
         auto t_grid_start = clock::now();
 
         std::unordered_map<Bin, std::vector<int>> grid;
@@ -192,6 +197,9 @@ MeanShiftResult meanShiftOptimized(std::vector<uint8_t>& data, float bandwidth,
         auto t_shift_end = clock::now();
         total_shift_ms += std::chrono::duration<double, std::milli>(t_shift_end - t_shift_start).count();
 
+        double iter_ms = std::chrono::duration<double, std::milli>(t_shift_end - t_iter_start).count();
+        iter_details.push_back({iter + 1, iter_ms, max_change});
+
         current.swap(next);
 
         if(show_pbar)
@@ -206,5 +214,5 @@ MeanShiftResult meanShiftOptimized(std::vector<uint8_t>& data, float bandwidth,
 
     convertFromFloat(current, data);
 
-    return MeanShiftResult{iter + 1, total_grid_ms, total_shift_ms};
+    return MeanShiftResult{static_cast<int>(iter_details.size()), total_grid_ms, total_shift_ms, iter_details};
 }

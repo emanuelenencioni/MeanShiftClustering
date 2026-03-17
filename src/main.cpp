@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -9,14 +10,16 @@
 #include <opencv2/opencv.hpp>
 #include "STBImage.h"
 #include "meanshift.h"
+#include "meanshiftSoA.h"
 
 static void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " <image> [bandwidth] [max_iter] [brute|grid] [--pbar]" << std::endl;
-    std::cerr << "  bandwidth : float, default 150" << std::endl;
-    std::cerr << "  max_iter  : int,   default 100" << std::endl;
-    std::cerr << "  algorithm : brute or grid, default grid" << std::endl;
-    std::cerr << "  --pbar    : show per-iteration progress bar on stderr" << std::endl;
+              << " <image> [bandwidth] [max_iter] [brute|grid|brute_soa|grid_soa] [--pbar] [--no-display]" << std::endl;
+    std::cerr << "  bandwidth    : float, default 150" << std::endl;
+    std::cerr << "  max_iter     : int,   default 100" << std::endl;
+    std::cerr << "  algorithm    : brute, grid, brute_soa, or grid_soa, default grid" << std::endl;
+    std::cerr << "  --pbar       : show per-iteration progress bar on stderr" << std::endl;
+    std::cerr << "  --no-display : skip OpenCV image display window" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -31,13 +34,16 @@ int main(int argc, char* argv[]) {
     std::strftime(ts_buf, sizeof(ts_buf), "%y%m%d_%H%M%S", tm_info);
     std::string timestamp(ts_buf);
 
-    // Strip --pbar from argv before positional parsing
+    // Strip flags from argv before positional parsing
     bool show_pbar = false;
+    bool no_display = false;
     std::vector<const char*> pos_args;
     pos_args.push_back(argv[0]);
     for(int i = 1; i < argc; ++i) {
         if(std::string(argv[i]) == "--pbar")
             show_pbar = true;
+        else if(std::string(argv[i]) == "--no-display")
+            no_display = true;
         else
             pos_args.push_back(argv[i]);
     }
@@ -52,7 +58,7 @@ int main(int argc, char* argv[]) {
     if(pos_argc >= 4) max_iter = std::stoi(pos_args[3]);
     if(pos_argc >= 5) algorithm = pos_args[4];
 
-    if(algorithm != "brute" && algorithm != "grid") {
+    if(algorithm != "brute" && algorithm != "grid" && algorithm != "brute_soa" && algorithm != "grid_soa") {
         std::cerr << "Unknown algorithm: " << algorithm << std::endl;
         printUsage(argv[0]);
         return 1;
@@ -83,6 +89,10 @@ int main(int argc, char* argv[]) {
     MeanShiftResult result{};
     if(algorithm == "brute")
         result = meanShift(data, bandwidth, max_iter, 1e-3f, show_pbar);
+    else if(algorithm == "brute_soa")
+        result = meanShiftSoA(data, bandwidth, max_iter, 1e-3f, show_pbar);
+    else if(algorithm == "grid_soa")
+        result = meanShiftSoAOptimized(data, bandwidth, max_iter, 1e-3f, show_pbar);
     else
         result = meanShiftOptimized(data, bandwidth, max_iter, 1e-3f, show_pbar);
     auto t_ms_end = clock::now();
@@ -110,12 +120,33 @@ int main(int argc, char* argv[]) {
     std::cout << "  Image load:        " << ms(t_load_start, t_load_end) << " ms" << std::endl;
     std::cout << "  Data conversion:   " << ms(t_conv_start, t_conv_end) << " ms" << std::endl;
     std::cout << "  Mean shift total:  " << ms(t_ms_start, t_ms_end) << " ms" << std::endl;
-    if(algorithm == "grid")
+    if(algorithm == "grid" || algorithm == "grid_soa")
         std::cout << "    Grid build:      " << result.grid_build_ms << " ms" << std::endl;
     std::cout << "    Pixel shifting:  " << result.pixel_shift_ms << " ms" << std::endl;
     std::cout << "  Result conversion: " << ms(t_out_start, t_out_end) << " ms" << std::endl;
     std::cout << "  Total:             " << ms(t_total_start, t_total_end) << " ms" << std::endl;
     std::cout << "  Iterations:        " << result.iterations << std::endl;
+
+    // Per-iteration table
+    double avg_iter_ms = 0.0;
+    if(!result.iter_details.empty()) {
+        std::cout << "\n[Per-iteration]" << std::endl;
+        std::cout << "  " << std::setw(5) << "Iter"
+                  << std::setw(14) << "Time (ms)"
+                  << std::setw(14) << "Max Change" << std::endl;
+        for(const auto& info : result.iter_details) {
+            std::cout << "  " << std::setw(5) << info.iteration
+                      << std::setw(14) << std::fixed << std::setprecision(2) << info.time_ms
+                      << std::setw(14) << std::fixed << std::setprecision(3) << info.max_change
+                      << std::endl;
+            avg_iter_ms += info.time_ms;
+        }
+        avg_iter_ms /= result.iter_details.size();
+        std::cout << "  " << std::setw(5) << "Avg:"
+                  << std::setw(14) << std::fixed << std::setprecision(2) << avg_iter_ms
+                  << std::endl;
+    }
+
     std::cout << "\nResult saved to: " << output_path << std::endl;
 
     {
@@ -135,26 +166,44 @@ int main(int argc, char* argv[]) {
         log << "  Image load:        " << ms(t_load_start, t_load_end) << " ms\n";
         log << "  Data conversion:   " << ms(t_conv_start, t_conv_end) << " ms\n";
         log << "  Mean shift total:  " << ms(t_ms_start, t_ms_end) << " ms\n";
-        if(algorithm == "grid")
+        if(algorithm == "grid" || algorithm == "grid_soa")
             log << "    Grid build:      " << result.grid_build_ms << " ms\n";
         log << "    Pixel shifting:  " << result.pixel_shift_ms << " ms\n";
         log << "  Result conversion: " << ms(t_out_start, t_out_end) << " ms\n";
         log << "  Total:             " << ms(t_total_start, t_total_end) << " ms\n";
         log << "  Iterations:        " << result.iterations << "\n";
+
+        if(!result.iter_details.empty()) {
+            log << "\n[Per-iteration]\n";
+            log << "  " << std::setw(5) << "Iter"
+                << std::setw(14) << "Time (ms)"
+                << std::setw(14) << "Max Change" << "\n";
+            for(const auto& info : result.iter_details) {
+                log << "  " << std::setw(5) << info.iteration
+                    << std::setw(14) << std::fixed << std::setprecision(2) << info.time_ms
+                    << std::setw(14) << std::fixed << std::setprecision(3) << info.max_change
+                    << "\n";
+            }
+            log << "  " << std::setw(5) << "Avg:"
+                << std::setw(14) << std::fixed << std::setprecision(2) << avg_iter_ms
+                << "\n";
+        }
     }
     std::cout << "Log saved to:    " << log_path << std::endl;
 
-    if(image_ref.empty()) {
-        std::cerr << "OpenCV could not load reference image for display" << std::endl;
-        return 0;
-    }
+    if(!no_display) {
+        if(image_ref.empty()) {
+            std::cerr << "OpenCV could not load reference image for display" << std::endl;
+            return 0;
+        }
 
-    std::vector<cv::Mat> images = {image_ref, result_mat};
-    cv::Mat output;
-    cv::hconcat(images, output);
-    cv::imshow("MeanShift (right)", output);
-    cv::waitKey(0);
-    cv::destroyAllWindows();
+        std::vector<cv::Mat> images = {image_ref, result_mat};
+        cv::Mat output;
+        cv::hconcat(images, output);
+        cv::imshow("MeanShift (right)", output);
+        cv::waitKey(0);
+        cv::destroyAllWindows();
+    }
 
     return 0;
 }
