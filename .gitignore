@@ -18,3 +18,5 @@ CMakeCache.txt
 *.oT
 *.dSYM
 *.swp
+results/*.png
+results/*.log
