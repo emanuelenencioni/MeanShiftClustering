@@ -14,12 +14,13 @@
 
 static void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " <image> [bandwidth] [max_iter] [brute|grid|brute_soa|grid_soa] [--pbar] [--no-display]" << std::endl;
+              << " <image> [bandwidth] [max_iter] [brute|grid|brute_soa|grid_soa] [--pbar] [--no-display] [--no-output]" << std::endl;
     std::cerr << "  bandwidth    : float, default 150" << std::endl;
     std::cerr << "  max_iter     : int,   default 100" << std::endl;
     std::cerr << "  algorithm    : brute, grid, brute_soa, or grid_soa, default grid" << std::endl;
     std::cerr << "  --pbar       : show per-iteration progress bar on stderr" << std::endl;
     std::cerr << "  --no-display : skip OpenCV image display window" << std::endl;
+    std::cerr << "  --no-output  : skip writing result PNG and log file" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -37,6 +38,7 @@ int main(int argc, char* argv[]) {
     // Strip flags from argv before positional parsing
     bool show_pbar = false;
     bool no_display = false;
+    bool no_output = false;
     std::vector<const char*> pos_args;
     pos_args.push_back(argv[0]);
     for(int i = 1; i < argc; ++i) {
@@ -44,6 +46,8 @@ int main(int argc, char* argv[]) {
             show_pbar = true;
         else if(std::string(argv[i]) == "--no-display")
             no_display = true;
+        else if(std::string(argv[i]) == "--no-output")
+            no_output = true;
         else
             pos_args.push_back(argv[i]);
     }
@@ -98,16 +102,27 @@ int main(int argc, char* argv[]) {
     auto t_ms_end = clock::now();
 
     auto t_out_start = clock::now();
-    cv::Mat image_ref = cv::imread(image_path, cv::IMREAD_COLOR);
-    cv::Mat result_mat = vectorToCVMat(data, image.width, image.height);
+    std::string output_path;
+    std::string log_path;
+    cv::Mat image_ref;
+    cv::Mat result_mat;
 
-    namespace fs = std::filesystem;
-    fs::path input_p(image_path);
-    fs::path out_dir = input_p.parent_path();
-    std::string stem = input_p.stem().string();
-    std::string output_path = (out_dir / (stem + "_" + timestamp + "_result.png")).string();
-    std::string log_path    = (out_dir / (stem + "_" + timestamp + "_result.log")).string();
-    cv::imwrite(output_path, result_mat);
+    bool need_mat = !no_output || !no_display;
+    if(need_mat) {
+        result_mat = vectorToCVMat(data, image.width, image.height);
+    }
+    if(!no_display) {
+        image_ref = cv::imread(image_path, cv::IMREAD_COLOR);
+    }
+    if(!no_output) {
+        namespace fs = std::filesystem;
+        fs::path input_p(image_path);
+        fs::path out_dir = input_p.parent_path();
+        std::string stem = input_p.stem().string();
+        output_path = (out_dir / (stem + "_" + timestamp + "_result.png")).string();
+        log_path    = (out_dir / (stem + "_" + timestamp + "_result.log")).string();
+        cv::imwrite(output_path, result_mat);
+    }
     auto t_out_end = clock::now();
 
     auto t_total_end = clock::now();
@@ -147,9 +162,9 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     }
 
-    std::cout << "\nResult saved to: " << output_path << std::endl;
+    if(!no_output) {
+        std::cout << "\nResult saved to: " << output_path << std::endl;
 
-    {
         std::ofstream log(log_path);
         log << "[Image]\n";
         log << "  file:    " << image_path << "\n";
@@ -189,7 +204,6 @@ int main(int argc, char* argv[]) {
                 << "\n";
         }
     }
-    std::cout << "Log saved to:    " << log_path << std::endl;
 
     if(!no_display) {
         if(image_ref.empty()) {
