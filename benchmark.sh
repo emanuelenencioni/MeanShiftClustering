@@ -16,15 +16,19 @@ BINARY="./build/mean_shift_seq"
 MAX_ITER=100
 NUM_RUNS=5
 
-# Images to benchmark (must exist in project root)
+# Images to benchmark (relative paths from project root)
 IMAGES=(
-    "red400.png"        # 400x400,  small, solid colour
-    "green400.png"      # 400x400,  small, solid colour
-    "2.png"             # 333x500,  medium, natural photo
-    "green.png"         # 1920x1080, large, solid/uniform
-    "blue.png"          # 1920x1080, large, solid/uniform
-    "red.png"           # 1920x1080, large, solid/uniform
-    "parrots.jpg"       # 3000x2000, large, complex
+    "Images/solid_100.png"          # 100x100,   tiny,  solid colour
+    "Images/red400.png"             # 400x400,   small, solid colour
+    "Images/green400.png"           # 400x400,   small, solid colour
+    "Images/2.png"                  # 333x500,   medium, natural photo
+    "Images/clusters_800.png"       # 800x600,   medium, few flat clusters
+    "Images/gradient_800.png"       # 800x600,   medium, smooth gradient
+    "Images/green.png"              # 1920x1080,  large, solid/uniform
+    "Images/blue.png"               # 1920x1080,  large, solid/uniform
+    "Images/red.png"                # 1920x1080,  large, solid/uniform
+    "Images/complex_textures.jpg"   # large, high complexity
+    "Images/parrots.jpg"            # 3000x2000,  large, complex
 )
 
 ALGORITHMS=("brute" "grid" "brute_soa" "grid_soa")
@@ -100,7 +104,7 @@ for img in "${IMAGES[@]}"; do
                 fi
 
                 # Run the binary and capture stdout
-                output=$("$BINARY" "$img" "$bw" "$MAX_ITER" "$algo" --no-display 2>/dev/null) || {
+                output=$("$BINARY" "$img" "$bw" "$MAX_ITER" "$algo" --no-display --no-output 2>/dev/null) || {
                     echo "" >&2
                     echo "  FAILED: $img $algo bw=$bw run=$run" >&2
                     continue
