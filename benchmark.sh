@@ -85,12 +85,14 @@ done
 echo "Benchmark: ${#IMAGES[@]} images × ${#ALGORITHMS[@]} algos × ${#BANDWIDTHS[@]} bandwidths × ${NUM_RUNS} runs = $total total runs" >&2
 echo "Output: $CSV" >&2
 echo "" >&2
-
 # ── Run matrix ────────────────────────────────────────────────────────────────
-
 run_idx=0
 for img in "${IMAGES[@]}"; do
     [[ -f "$img" ]] || { echo "  SKIP $img (not found)" >&2; continue; }
+
+    # Warmup execution for this image (not recorded)
+    echo "Warming up cache for: $img, ${ALGORITHMS[0]}, bw=${BANDWIDTHS[0]}" >&2
+    "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "${ALGORITHMS[0]}" --no-display --no-output >/dev/null 2>&1 || true
 
     for algo in "${ALGORITHMS[@]}"; do
         for bw in "${BANDWIDTHS[@]}"; do
