@@ -62,7 +62,7 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
             const float* src = &current[i * 3];
             float sum[3] = {0.0f, 0.0f, 0.0f};
             int count = 0;
-
+            // for each pixel we check all other pixels to see if they're within bandwidth, and if so we add them to the sum
             for(int j = 0; j < n_pixels; ++j) {
                 const float* neighbor = &current[j * 3];
                 if(squaredDistance(src, neighbor) <= bandwidth_sq) {
@@ -74,6 +74,7 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
             }
 
             float change = 0.0f;
+            // if we found any neighbors within bandwidth, compute  new value as the mean. Oth keep orig.
             if(count > 0) {
                 for(int k = 0; k < 3; ++k) {
                     float new_val = sum[k] / count;
