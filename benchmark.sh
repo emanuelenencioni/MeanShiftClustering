@@ -13,7 +13,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 BINARY="./build/mean_shift_seq"
-MAX_ITER=100
+MAX_ITER=10
 NUM_RUNS=5
 
 # Images to benchmark (relative paths from project root)
@@ -22,6 +22,11 @@ IMAGES=(
     "Images/red400.png"             # 400x400,   small, solid colour
     "Images/green400.png"           # 400x400,   small, solid colour
     "Images/2.png"                  # 333x500,   medium, natural photo
+    "BSD500/216041.jpg"  # 481x321,   medium, natural photo
+    "BSD500/188005.jpg"  # 481x321,   medium, natural photo
+    "BSD500/242078.jpg"  # 481x321,   medium, natural photo
+    "BSD500/246016.jpg"  # 481x321,   medium, natural photo
+    "BSD500/353013.jpg"             # 481x321,   medium, natural photo
     "Images/clusters_800.png"       # 800x600,   medium, few flat clusters
     "Images/gradient_800.png"       # 800x600,   medium, smooth gradient
     "Images/green.png"              # 1920x1080,  large, solid/uniform
@@ -31,7 +36,7 @@ IMAGES=(
     "Images/parrots.jpg"            # 3000x2000,  large, complex
 )
 
-ALGORITHMS=("brute" "grid" "brute_soa" "grid_soa")
+ALGORITHMS=("seq" "soa")
 
 BANDWIDTHS=(20 50 100)
 
@@ -67,7 +72,7 @@ mkdir -p results
 TIMESTAMP=$(date +%y%m%d_%H%M%S)
 CSV="results/benchmark_${TIMESTAMP}.csv"
 
-HEADER="image,algorithm,bandwidth,run,iterations,total_ms,shift_ms,grid_ms,avg_iter_ms"
+HEADER="image,algorithm,bandwidth,run,iterations,total_ms,shift_ms,avg_iter_ms"
 echo "$HEADER" > "$CSV"
 
 # ── Count total runs ──────────────────────────────────────────────────────────
@@ -116,10 +121,9 @@ for img in "${IMAGES[@]}"; do
                 iterations=$(echo "$output" | grep -oP 'Iterations:\s+\K[0-9]+' || echo "0")
                 total_ms=$(echo "$output"   | grep -oP 'Total:\s+\K[0-9.]+' || echo "0")
                 shift_ms=$(echo "$output"   | grep -oP 'Pixel shifting:\s+\K[0-9.]+' || echo "0")
-                grid_ms=$(echo "$output"    | grep -oP 'Grid build:\s+\K[0-9.]+' || echo "0")
                 avg_iter_ms=$(echo "$output" | grep -oP 'Avg:\s+\K[0-9.]+' || echo "0")
 
-                echo "$img,$algo,$bw,$run,$iterations,$total_ms,$shift_ms,$grid_ms,$avg_iter_ms" >> "$CSV"
+                echo "$img,$algo,$bw,$run,$iterations,$total_ms,$shift_ms,$avg_iter_ms" >> "$CSV"
             done
         done
     done

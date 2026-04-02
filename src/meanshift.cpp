@@ -15,8 +15,12 @@ void printProgressBar(int iter, int max_iter, float max_change) {
     std::fflush(stderr);
 }
 
-float squaredDistance(const float* a, const float* b) {
-    float sum = 0.0f;
+/* 5D squared distance: spatial (ax,ay) vs (bx,by) + RGB a[0..2] vs b[0..2]. */
+float squaredDistance(const float* a, const float* b,
+                      float ax, float ay, float bx, float by) {
+    float dx = ax - bx;
+    float dy = ay - by;
+    float sum = dx * dx + dy * dy;
     for(int k = 0; k < 3; ++k) {
         float diff = a[k] - b[k];
         sum += diff * diff;
@@ -37,8 +41,8 @@ void convertFromFloat(const std::vector<float>& current, std::vector<uint8_t>& d
     }
 }
 
-// Brute-force: O(n^2) per iteration
-MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
+// Brute-force: O(n^2) per iteration, 5D feature space (x, y, R, G, B)
+MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth,
                           int max_iter, float tol, bool show_pbar) {
     using clock = std::chrono::steady_clock;
 
@@ -60,12 +64,16 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
 
         for(int i = 0; i < n_pixels; ++i) {
             const float* src = &current[i * 3];
+            float xi = static_cast<float>(i % width);
+            float yi = static_cast<float>(i / width);
             float sum[3] = {0.0f, 0.0f, 0.0f};
             int count = 0;
-            // for each pixel we check all other pixels to see if they're within bandwidth, and if so we add them to the sum
+
             for(int j = 0; j < n_pixels; ++j) {
                 const float* neighbor = &current[j * 3];
-                if(squaredDistance(src, neighbor) <= bandwidth_sq) {
+                float xj = static_cast<float>(j % width);
+                float yj = static_cast<float>(j / width);
+                if(squaredDistance(src, neighbor, xi, yi, xj, yj) <= bandwidth_sq) {
                     sum[0] += neighbor[0];
                     sum[1] += neighbor[1];
                     sum[2] += neighbor[2];
@@ -74,7 +82,6 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
             }
 
             float change = 0.0f;
-            // if we found any neighbors within bandwidth, compute  new value as the mean. Oth keep orig.
             if(count > 0) {
                 for(int k = 0; k < 3; ++k) {
                     float new_val = sum[k] / count;
@@ -109,111 +116,5 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, float bandwidth,
 
     convertFromFloat(current, data);
 
-    return MeanShiftResult{static_cast<int>(iter_details.size()), 0.0, total_shift_ms, iter_details};
-}
-
-// Grid-accelerated: O(n) amortized per iteration via spatial hashing
-MeanShiftResult meanShiftOptimized(std::vector<uint8_t>& data, float bandwidth,
-                                   int max_iter, float tol, bool show_pbar) {
-    using clock = std::chrono::steady_clock;
-
-    std::vector<float> current;
-    convertToFloat(data, current);
-
-    const float bandwidth_sq = bandwidth * bandwidth;
-    const int n_pixels = static_cast<int>(current.size() / 3);
-
-    double total_grid_ms = 0.0;
-    double total_shift_ms = 0.0;
-    int iter = 0;
-    std::vector<IterationInfo> iter_details;
-
-    for(; iter < max_iter; ++iter) {
-        std::vector<float> next(current.size());
-        float max_change = 0.0f;
-
-        auto t_iter_start = clock::now();
-        auto t_grid_start = clock::now();
-
-        std::unordered_map<Bin, std::vector<int>> grid;
-        // maybe parallelize this loop in future, but need to be careful about concurrent writes to grid
-        for(int j = 0; j < n_pixels; ++j) {
-            const float* p = &current[j * 3];
-            Bin b{static_cast<int>(p[0] / bandwidth),
-                  static_cast<int>(p[1] / bandwidth),
-                  static_cast<int>(p[2] / bandwidth)};
-            grid[b].push_back(j);
-        }
-
-        auto t_grid_end = clock::now();
-        total_grid_ms += std::chrono::duration<double, std::milli>(t_grid_end - t_grid_start).count();
-
-        auto t_shift_start = clock::now();
-        // parallelize this loop in future, but need to be careful about concurrent writes to next and max_change
-        for(int i = 0; i < n_pixels; ++i) {
-            const float* src = &current[i * 3];
-            float sum[3] = {0.0f, 0.0f, 0.0f};
-            int count = 0;
-
-            Bin b{static_cast<int>(src[0] / bandwidth),
-                  static_cast<int>(src[1] / bandwidth),
-                  static_cast<int>(src[2] / bandwidth)};
-
-            for(int dx = -1; dx <= 1; ++dx) {
-                for(int dy = -1; dy <= 1; ++dy) {
-                    for(int dz = -1; dz <= 1; ++dz) {
-                        Bin nb{b.x + dx, b.y + dy, b.z + dz};
-                        auto it = grid.find(nb);
-                        if(it != grid.end()) {
-                            for(int j : it->second) {
-                                const float* neighbor = &current[j * 3];
-                                if(squaredDistance(src, neighbor) <= bandwidth_sq) {
-                                    sum[0] += neighbor[0];
-                                    sum[1] += neighbor[1];
-                                    sum[2] += neighbor[2];
-                                    count++;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            float change = 0.0f;
-            if(count > 0) {
-                for(int k = 0; k < 3; ++k) {
-                    float new_val = sum[k] / count;
-                    change = std::max(change, std::abs(new_val - src[k]));
-                    next[i * 3 + k] = new_val;
-                }
-            } else {
-                for(int k = 0; k < 3; ++k)
-                    next[i * 3 + k] = src[k];
-            }
-
-            if(change > max_change)
-                max_change = change;
-        }
-
-        auto t_shift_end = clock::now();
-        total_shift_ms += std::chrono::duration<double, std::milli>(t_shift_end - t_shift_start).count();
-
-        double iter_ms = std::chrono::duration<double, std::milli>(t_shift_end - t_iter_start).count();
-        iter_details.push_back({iter + 1, iter_ms, max_change});
-
-        current.swap(next);
-
-        if(show_pbar)
-            printProgressBar(iter + 1, max_iter, max_change);
-
-        if(max_change <= tol)
-            break;
-    }
-
-    if(show_pbar)
-        std::fprintf(stderr, "\n");
-
-    convertFromFloat(current, data);
-
-    return MeanShiftResult{static_cast<int>(iter_details.size()), total_grid_ms, total_shift_ms, iter_details};
+    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, iter_details};
 }

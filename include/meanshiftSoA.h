@@ -10,6 +10,8 @@ struct PixelSoA {
     std::vector<float> r;
     std::vector<float> g;
     std::vector<float> b;
+    std::vector<float> x;  // spatial column coordinate (fixed)
+    std::vector<float> y;  // spatial row coordinate (fixed)
     int n;
 };
 
@@ -22,22 +24,17 @@ struct NeighborAccumulator {
 };
 
 // Convert AoS float buffer to SoA representation
-void convertToFloatSoA(const std::vector<float>& current, PixelSoA& soa);
+void convertToFloatSoA(const std::vector<float>& current, PixelSoA& soa, int width);
 
 // Convert SoA back to AoS float buffer
 void convertFromFloatSoA(const PixelSoA& soa, std::vector<float>& current);
 
-// SoA version of squared distance between pixels i and j
+// SoA version of 5D squared distance between pixels i and j
 float squaredDistanceSoA(const PixelSoA& soa, int i, int j);
 
-// Mean shift using SoA - brute force O(n^2)
-MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, float bandwidth,
+// Mean shift using SoA - brute force O(n^2), 5D feature space (x, y, R, G, B)
+MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwidth,
                              int max_iter = 100, float tol = 1e-3f,
                              bool show_pbar = false);
-
-// Mean shift using SoA - grid accelerated
-MeanShiftResult meanShiftSoAOptimized(std::vector<uint8_t>& data, float bandwidth,
-                                      int max_iter = 100, float tol = 1e-3f,
-                                      bool show_pbar = false);
 
 #endif // MEANSHIFT_SOA_H

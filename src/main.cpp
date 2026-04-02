@@ -14,10 +14,10 @@
 
 static void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " <image> [bandwidth] [max_iter] [brute|grid|brute_soa|grid_soa] [--pbar] [--no-display] [--no-output]" << std::endl;
+              << " <image> [bandwidth] [max_iter] [seq|soa] [--pbar] [--no-display] [--no-output]" << std::endl;
     std::cerr << "  bandwidth    : float, default 150" << std::endl;
     std::cerr << "  max_iter     : int,   default 100" << std::endl;
-    std::cerr << "  algorithm    : brute, grid, brute_soa, or grid_soa, default grid" << std::endl;
+    std::cerr << "  algorithm    : seq or soa, default seq" << std::endl;
     std::cerr << "  --pbar       : show per-iteration progress bar on stderr" << std::endl;
     std::cerr << "  --no-display : skip OpenCV image display window" << std::endl;
     std::cerr << "  --no-output  : skip writing result PNG and log file" << std::endl;
@@ -56,13 +56,13 @@ int main(int argc, char* argv[]) {
     const char* image_path = pos_args[1];
     float bandwidth = 150.0f;
     int max_iter = 100;
-    std::string algorithm = "grid";
+    std::string algorithm = "seq";
 
     if(pos_argc >= 3) bandwidth = std::stof(pos_args[2]);
     if(pos_argc >= 4) max_iter = std::stoi(pos_args[3]);
     if(pos_argc >= 5) algorithm = pos_args[4];
 
-    if(algorithm != "brute" && algorithm != "grid" && algorithm != "brute_soa" && algorithm != "grid_soa") {
+    if(algorithm != "seq" && algorithm != "soa") {
         std::cerr << "Unknown algorithm: " << algorithm << std::endl;
         printUsage(argv[0]);
         return 1;
@@ -91,14 +91,10 @@ int main(int argc, char* argv[]) {
 
     auto t_ms_start = clock::now();
     MeanShiftResult result{};
-    if(algorithm == "brute")
-        result = meanShift(data, bandwidth, max_iter, 1e-3f, show_pbar);
-    else if(algorithm == "brute_soa")
-        result = meanShiftSoA(data, bandwidth, max_iter, 1e-3f, show_pbar);
-    else if(algorithm == "grid_soa")
-        result = meanShiftSoAOptimized(data, bandwidth, max_iter, 1e-3f, show_pbar);
+    if(algorithm == "soa")
+        result = meanShiftSoA(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     else
-        result = meanShiftOptimized(data, bandwidth, max_iter, 1e-3f, show_pbar);
+        result = meanShift(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     auto t_ms_end = clock::now();
 
     auto t_out_start = clock::now();
@@ -135,8 +131,6 @@ int main(int argc, char* argv[]) {
     std::cout << "  Image load:        " << ms(t_load_start, t_load_end) << " ms" << std::endl;
     std::cout << "  Data conversion:   " << ms(t_conv_start, t_conv_end) << " ms" << std::endl;
     std::cout << "  Mean shift total:  " << ms(t_ms_start, t_ms_end) << " ms" << std::endl;
-    if(algorithm == "grid" || algorithm == "grid_soa")
-        std::cout << "    Grid build:      " << result.grid_build_ms << " ms" << std::endl;
     std::cout << "    Pixel shifting:  " << result.pixel_shift_ms << " ms" << std::endl;
     std::cout << "  Result conversion: " << ms(t_out_start, t_out_end) << " ms" << std::endl;
     std::cout << "  Total:             " << ms(t_total_start, t_total_end) << " ms" << std::endl;
@@ -181,8 +175,6 @@ int main(int argc, char* argv[]) {
         log << "  Image load:        " << ms(t_load_start, t_load_end) << " ms\n";
         log << "  Data conversion:   " << ms(t_conv_start, t_conv_end) << " ms\n";
         log << "  Mean shift total:  " << ms(t_ms_start, t_ms_end) << " ms\n";
-        if(algorithm == "grid" || algorithm == "grid_soa")
-            log << "    Grid build:      " << result.grid_build_ms << " ms\n";
         log << "    Pixel shifting:  " << result.pixel_shift_ms << " ms\n";
         log << "  Result conversion: " << ms(t_out_start, t_out_end) << " ms\n";
         log << "  Total:             " << ms(t_total_start, t_total_end) << " ms\n";
