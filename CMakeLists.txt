@@ -17,8 +17,9 @@ endif()
 add_executable(${PROJECT_NAME}
 src/main.cpp
 src/STBImage.cpp
-src/meanshift.cpp
-src/meanshiftSoA.cpp
+src/meanshift_baseline.cpp
+src/meanshift_seq.cpp
+src/meanshift_soa.cpp
 )
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_include_directories(${PROJECT_NAME} PRIVATE include )
