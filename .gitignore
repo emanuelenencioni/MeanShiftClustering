@@ -20,3 +20,4 @@ CMakeCache.txt
 *.swp
 results/*.png
 results/*.log
+BSD500
