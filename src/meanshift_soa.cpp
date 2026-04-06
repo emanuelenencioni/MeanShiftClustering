@@ -1,4 +1,4 @@
-#include "meanshiftSoA.h"
+#include "meanshift_soa.h"
 #include <chrono>
 #include <algorithm>
 #include <cstdio>

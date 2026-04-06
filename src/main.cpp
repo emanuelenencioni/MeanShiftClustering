@@ -10,14 +10,15 @@
 #include <opencv2/opencv.hpp>
 #include "STBImage.h"
 #include "meanshift.h"
-#include "meanshiftSoA.h"
+#include "meanshift_soa.h"
+#include "meanshift_baseline.h"
 
 static void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " <image> [bandwidth] [max_iter] [seq|soa] [--pbar] [--no-display] [--no-output]" << std::endl;
+              << " <image> [bandwidth] [max_iter] [baseline|seq|soa] [--pbar] [--no-display] [--no-output]" << std::endl;
     std::cerr << "  bandwidth    : float, default 150" << std::endl;
     std::cerr << "  max_iter     : int,   default 100" << std::endl;
-    std::cerr << "  algorithm    : seq or soa, default seq" << std::endl;
+    std::cerr << "  algorithm    : baseline, seq or soa, default seq" << std::endl;
     std::cerr << "  --pbar       : show per-iteration progress bar on stderr" << std::endl;
     std::cerr << "  --no-display : skip OpenCV image display window" << std::endl;
     std::cerr << "  --no-output  : skip writing result PNG and log file" << std::endl;
@@ -62,7 +63,7 @@ int main(int argc, char* argv[]) {
     if(pos_argc >= 4) max_iter = std::stoi(pos_args[3]);
     if(pos_argc >= 5) algorithm = pos_args[4];
 
-    if(algorithm != "seq" && algorithm != "soa") {
+    if(algorithm != "baseline" && algorithm != "seq" && algorithm != "soa") {
         std::cerr << "Unknown algorithm: " << algorithm << std::endl;
         printUsage(argv[0]);
         return 1;
@@ -86,12 +87,16 @@ int main(int argc, char* argv[]) {
               << "  max_iter=" << max_iter << std::endl;
 
     auto t_conv_start = clock::now();
-    std::vector<uint8_t> data = STBImageToStdVector(image);
+    std::vector<uint8_t> data;
+    if(algorithm != "baseline")
+        data = STBImageToStdVector(image);
     auto t_conv_end = clock::now();
 
     auto t_ms_start = clock::now();
     MeanShiftResult result{};
-    if(algorithm == "soa")
+    if(algorithm == "baseline")
+        result = meanShiftBaseline(image, bandwidth, max_iter, 1e-3f, show_pbar);
+    else if(algorithm == "soa")
         result = meanShiftSoA(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     else
         result = meanShift(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
@@ -105,7 +110,10 @@ int main(int argc, char* argv[]) {
 
     bool need_mat = !no_output || !no_display;
     if(need_mat) {
-        result_mat = vectorToCVMat(data, image.width, image.height);
+        if(algorithm == "baseline")
+            result_mat = STBImageToCVMat(image);
+        else
+            result_mat = vectorToCVMat(data, image.width, image.height);
     }
     if(!no_display) {
         image_ref = cv::imread(image_path, cv::IMREAD_COLOR);
