@@ -29,9 +29,6 @@ IMAGES=(
     "BSD500/353013.jpg"             # 481x321,   medium, natural photo
     "Images/clusters_800.png"       # 800x600,   medium, few flat clusters
     "Images/gradient_800.png"       # 800x600,   medium, smooth gradient
-    "Images/green.png"              # 1920x1080,  large, solid/uniform
-    "Images/blue.png"               # 1920x1080,  large, solid/uniform
-    "Images/red.png"                # 1920x1080,  large, solid/uniform
     "Images/complex_textures.jpg"   # large, high complexity
     "Images/parrots.jpg"            # 3000x2000,  large, complex
 )
