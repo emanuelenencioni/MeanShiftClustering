@@ -25,7 +25,7 @@ bool STBImage::loadImage(const std::string& name) {
 }
 
 void STBImage::saveImage(const std::string& newName) const {
-    stbi_write_jpg(newName.c_str(), width, height, channels, rgb_image, width * channels);
+    stbi_write_png(newName.c_str(), width, height, channels, rgb_image, width * channels);
 }
 
 cv::Mat STBImageToCVMat(const STBImage& image) {
@@ -59,4 +59,10 @@ cv::Mat vectorToCVMat(const std::vector<uint8_t>& image, int width, int height) 
         }
     }
     return opencv_image;
+}
+
+bool saveSTB(const std::string& path, int width, int height,
+             const std::vector<uint8_t>& data) {
+    int stride = width * 3;
+    return stbi_write_png(path.c_str(), width, height, 3, data.data(), stride) != 0;
 }

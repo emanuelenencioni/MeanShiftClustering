@@ -105,19 +105,7 @@ int main(int argc, char* argv[]) {
     auto t_out_start = clock::now();
     std::string output_path;
     std::string log_path;
-    cv::Mat image_ref;
-    cv::Mat result_mat;
 
-    bool need_mat = !no_output || !no_display;
-    if(need_mat) {
-        if(algorithm == "baseline")
-            result_mat = STBImageToCVMat(image);
-        else
-            result_mat = vectorToCVMat(data, image.width, image.height);
-    }
-    if(!no_display) {
-        image_ref = cv::imread(image_path, cv::IMREAD_COLOR);
-    }
     if(!no_output) {
         namespace fs = std::filesystem;
         fs::path input_p(image_path);
@@ -125,7 +113,11 @@ int main(int argc, char* argv[]) {
         std::string stem = input_p.stem().string();
         output_path = (out_dir / (stem + "_" + timestamp + "_result.png")).string();
         log_path    = (out_dir / (stem + "_" + timestamp + "_result.log")).string();
-        cv::imwrite(output_path, result_mat);
+        // Save result using stb_image_write — no OpenCV needed
+        if(algorithm == "baseline")
+            image.saveImage(output_path);
+        else
+            saveSTB(output_path, image.width, image.height, data);
     }
     auto t_out_end = clock::now();
 
@@ -206,10 +198,16 @@ int main(int argc, char* argv[]) {
     }
 
     if(!no_display) {
+        cv::Mat image_ref = cv::imread(image_path, cv::IMREAD_COLOR);
         if(image_ref.empty()) {
             std::cerr << "OpenCV could not load reference image for display" << std::endl;
             return 0;
         }
+        cv::Mat result_mat;
+        if(algorithm == "baseline")
+            result_mat = STBImageToCVMat(image);
+        else
+            result_mat = vectorToCVMat(data, image.width, image.height);
 
         std::vector<cv::Mat> images = {image_ref, result_mat};
         cv::Mat output;
