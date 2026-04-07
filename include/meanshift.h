@@ -5,6 +5,12 @@
 #include <vector>
 #include <cmath>
 
+/* AoS pixel: color channels (shift each iteration) + fixed spatial coords. */
+struct Pixel {
+    float r, g, b;  // color — updated each mean shift iteration
+    float x, y;     // spatial position — fixed at load time, never updated
+};
+
 struct IterationInfo {
     int iteration;
     double time_ms;
@@ -16,12 +22,6 @@ struct MeanShiftResult {
     double pixel_shift_ms;
     std::vector<IterationInfo> iter_details;
 };
-
-/* 5D squared distance: (x, y, R, G, B).
- * ax, ay are the spatial coordinates of point a; bx, by of point b.
- * a[0..2] and b[0..2] are R, G, B values. */
-float squaredDistance(const float* a, const float* b,
-                      float ax, float ay, float bx, float by);
 
 void convertToFloat(const std::vector<uint8_t>& data, std::vector<float>& out);
 void convertFromFloat(const std::vector<float>& current, std::vector<uint8_t>& data);
