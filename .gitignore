@@ -21,3 +21,6 @@ CMakeCache.txt
 results/*.png
 results/*.log
 BSD500
+Images/*.png
+Images/*.log
+*.csv
