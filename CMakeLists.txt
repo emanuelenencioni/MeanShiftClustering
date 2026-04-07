@@ -20,6 +20,8 @@ src/STBImage.cpp
 src/meanshift_baseline.cpp
 src/meanshift_seq.cpp
 src/meanshift_soa.cpp
+src/meanshift_omp.cpp
+src/meanshift_omp_soa.cpp
 )
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_include_directories(${PROJECT_NAME} PRIVATE include )
