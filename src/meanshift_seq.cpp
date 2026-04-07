@@ -2,6 +2,8 @@
 #include <chrono>
 #include <algorithm>
 #include <cstdio>
+#include <iostream>
+#include <cstdlib>
 
 void printProgressBar(int iter, int max_iter, float max_change) {
     const int bar_width = 30;
@@ -62,10 +64,39 @@ void convertFromFloat(const std::vector<float>& current, std::vector<uint8_t>& d
     }
 }
 
+/* --- Kernel functions ---------------------------------------------------- */
+
+static float kernelFlat(float sq_dist, float bw_sq) {
+    return sq_dist <= bw_sq ? 1.0f : 0.0f;
+}
+
+static float kernelGaussian(float sq_dist, float bw_sq) {
+    if(sq_dist > bw_sq) return 0.0f;
+    return std::exp(-sq_dist / (2.0f * bw_sq));
+}
+
+static float kernelEpanechnikov(float sq_dist, float bw_sq) {
+    if(sq_dist > bw_sq) return 0.0f;
+    return 1.0f - sq_dist / bw_sq;
+}
+
+KernelFn makeKernel(const std::string& name) {
+    if(name == "flat")           return kernelFlat;
+    if(name == "gaussian")       return kernelGaussian;
+    if(name == "epanechnikov")   return kernelEpanechnikov;
+    std::cerr << "Unknown kernel: " << name
+              << ". Valid options: flat, gaussian, epanechnikov" << std::endl;
+    std::exit(1);
+}
+
+/* --- Mean shift ---------------------------------------------------------- */
+
 // Brute-force: O(n^2) per iteration, 5D feature space (x, y, R, G, B)
 MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth,
-                          int max_iter, float tol, bool show_pbar) {
+                          int max_iter, float tol, bool show_pbar, KernelFn kernel) {
     using clock = std::chrono::steady_clock;
+
+    if(!kernel) kernel = kernelFlat;
 
     std::vector<Pixel> current;
     toPixels(data, current, width);
@@ -86,22 +117,23 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth
         for(int i = 0; i < n_pixels; ++i) {
             const Pixel& src = current[i];
             float sum_r = 0.0f, sum_g = 0.0f, sum_b = 0.0f;
-            int count = 0;
+            float weight_sum = 0.0f;
 
             for(int j = 0; j < n_pixels; ++j) {
-                if(squaredDistance(src, current[j]) <= bandwidth_sq) {
-                    sum_r += current[j].r;
-                    sum_g += current[j].g;
-                    sum_b += current[j].b;
-                    count++;
+                float w = kernel(squaredDistance(src, current[j]), bandwidth_sq);
+                if(w > 0.0f) {
+                    sum_r += w * current[j].r;
+                    sum_g += w * current[j].g;
+                    sum_b += w * current[j].b;
+                    weight_sum += w;
                 }
             }
 
             float change = 0.0f;
-            if(count > 0) {
-                float new_r = sum_r / count;
-                float new_g = sum_g / count;
-                float new_b = sum_b / count;
+            if(weight_sum > 0.0f) {
+                float new_r = sum_r / weight_sum;
+                float new_g = sum_g / weight_sum;
+                float new_b = sum_b / weight_sum;
                 change = std::max({std::abs(new_r - src.r),
                                    std::abs(new_g - src.g),
                                    std::abs(new_b - src.b)});

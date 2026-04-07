@@ -43,8 +43,10 @@ float squaredDistanceSoA(const PixelSoA& soa, int i, int j) {
 
 // Brute-force mean shift using SoA, 5D feature space (x, y, R, G, B)
 MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwidth,
-                             int max_iter, float tol, bool show_pbar) {
+                             int max_iter, float tol, bool show_pbar, KernelFn kernel) {
     using clock = std::chrono::steady_clock;
+
+    if(!kernel) kernel = makeKernel("flat");
 
     std::vector<float> current;
     convertToFloat(data, current);
@@ -71,19 +73,20 @@ MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwi
             NeighborAccumulator acc;
 
             for(int j = 0; j < n_pixels; ++j) {
-                if(squaredDistanceSoA(soa, i, j) <= bandwidth_sq) {
-                    acc.sum_r += soa.r[j];
-                    acc.sum_g += soa.g[j];
-                    acc.sum_b += soa.b[j];
-                    acc.count++;
+                float w = kernel(squaredDistanceSoA(soa, i, j), bandwidth_sq);
+                if(w > 0.0f) {
+                    acc.sum_r += w * soa.r[j];
+                    acc.sum_g += w * soa.g[j];
+                    acc.sum_b += w * soa.b[j];
+                    acc.weight_sum += w;
                 }
             }
 
             float change = 0.0f;
-            if(acc.count > 0) {
-                float new_r = acc.sum_r / acc.count;
-                float new_g = acc.sum_g / acc.count;
-                float new_b = acc.sum_b / acc.count;
+            if(acc.weight_sum > 0.0f) {
+                float new_r = acc.sum_r / acc.weight_sum;
+                float new_g = acc.sum_g / acc.weight_sum;
+                float new_b = acc.sum_b / acc.weight_sum;
 
                 float dr = new_r - soa.r[i];
                 float dg = new_g - soa.g[i];

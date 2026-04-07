@@ -23,8 +23,10 @@ static float squaredDistanceBaseline(const std::vector<float>& buf, int i, int j
  * - Jacobi update: reads from current[], writes to next[], then swaps.
  * Results written back to image.rgb_image in place. */
 MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
-                                  int max_iter, float tol, bool show_pbar) {
+                                  int max_iter, float tol, bool show_pbar, KernelFn kernel) {
     using clock = std::chrono::steady_clock;
+
+    if(!kernel) kernel = makeKernel("flat");
 
     const int width = image.width;
     const int n_pixels = image.width * image.height;
@@ -49,22 +51,23 @@ MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
 
         for(int i = 0; i < n_pixels; ++i) {
             float sum_r = 0.0f, sum_g = 0.0f, sum_b = 0.0f;
-            int count = 0;
+            float weight_sum = 0.0f;
 
             for(int j = 0; j < n_pixels; ++j) {
-                if(squaredDistanceBaseline(current, i, j, width) <= bandwidth_sq) {
-                    sum_r += current[j * 3 + 0];
-                    sum_g += current[j * 3 + 1];
-                    sum_b += current[j * 3 + 2];
-                    count++;
+                float w = kernel(squaredDistanceBaseline(current, i, j, width), bandwidth_sq);
+                if(w > 0.0f) {
+                    sum_r += w * current[j * 3 + 0];
+                    sum_g += w * current[j * 3 + 1];
+                    sum_b += w * current[j * 3 + 2];
+                    weight_sum += w;
                 }
             }
 
             float change = 0.0f;
-            if(count > 0) {
-                float new_r = sum_r / count;
-                float new_g = sum_g / count;
-                float new_b = sum_b / count;
+            if(weight_sum > 0.0f) {
+                float new_r = sum_r / weight_sum;
+                float new_g = sum_g / weight_sum;
+                float new_b = sum_b / weight_sum;
                 change = std::max({std::abs(new_r - current[i * 3 + 0]),
                                    std::abs(new_g - current[i * 3 + 1]),
                                    std::abs(new_b - current[i * 3 + 2])});

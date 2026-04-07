@@ -10,6 +10,6 @@
 // Thread count controlled via OMP_NUM_THREADS environment variable.
 MeanShiftResult meanShiftSoAOMP(std::vector<uint8_t>& data, int width, float bandwidth,
                                 int max_iter = 100, float tol = 1e-3f,
-                                bool show_pbar = false);
+                                bool show_pbar = false, KernelFn kernel = nullptr);
 
 #endif // MEANSHIFT_OMP_SOA_H

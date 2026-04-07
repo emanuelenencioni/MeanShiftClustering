@@ -42,8 +42,10 @@ static void fromPixelsOMP(const std::vector<Pixel>& pixels, std::vector<uint8_t>
 // Outer loop over pixels is parallelised; Jacobi semantics guarantee no races.
 // next[] is hoisted outside the iteration loop to avoid repeated allocation.
 MeanShiftResult meanShiftOMP(std::vector<uint8_t>& data, int width, float bandwidth,
-                             int max_iter, float tol, bool show_pbar) {
+                             int max_iter, float tol, bool show_pbar, KernelFn kernel) {
     using clock = std::chrono::steady_clock;
+
+    if(!kernel) kernel = makeKernel("flat");
 
     std::vector<Pixel> current;
     toPixelsOMP(data, current, width);
@@ -67,22 +69,23 @@ MeanShiftResult meanShiftOMP(std::vector<uint8_t>& data, int width, float bandwi
         for(int i = 0; i < n_pixels; ++i) {
             const Pixel& src = current[i];
             float sum_r = 0.0f, sum_g = 0.0f, sum_b = 0.0f;
-            int count = 0;
+            float weight_sum = 0.0f;
 
             for(int j = 0; j < n_pixels; ++j) {
-                if(squaredDistanceOMP(src, current[j]) <= bandwidth_sq) {
-                    sum_r += current[j].r;
-                    sum_g += current[j].g;
-                    sum_b += current[j].b;
-                    count++;
+                float w = kernel(squaredDistanceOMP(src, current[j]), bandwidth_sq);
+                if(w > 0.0f) {
+                    sum_r += w * current[j].r;
+                    sum_g += w * current[j].g;
+                    sum_b += w * current[j].b;
+                    weight_sum += w;
                 }
             }
 
             float change = 0.0f;
-            if(count > 0) {
-                float new_r = sum_r / count;
-                float new_g = sum_g / count;
-                float new_b = sum_b / count;
+            if(weight_sum > 0.0f) {
+                float new_r = sum_r / weight_sum;
+                float new_g = sum_g / weight_sum;
+                float new_b = sum_b / weight_sum;
                 change = std::max({std::abs(new_r - src.r),
                                    std::abs(new_g - src.g),
                                    std::abs(new_b - src.b)});

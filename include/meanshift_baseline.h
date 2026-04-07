@@ -13,6 +13,6 @@
  * This is the unoptimized baseline for performance comparison. */
 MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
                                   int max_iter = 100, float tol = 1e-3f,
-                                  bool show_pbar = false);
+                                  bool show_pbar = false, KernelFn kernel = nullptr);
 
 #endif // MEANSHIFT_BASELINE_H

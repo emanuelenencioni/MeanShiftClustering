@@ -15,12 +15,12 @@ struct PixelSoA {
     int n;
 };
 
-// SoA neighbor accumulator
+// SoA neighbor accumulator — uses float weight_sum to support weighted kernels
 struct NeighborAccumulator {
     float sum_r = 0.0f;
     float sum_g = 0.0f;
     float sum_b = 0.0f;
-    int count = 0;
+    float weight_sum = 0.0f;
 };
 
 // Convert AoS float buffer to SoA representation
@@ -35,6 +35,6 @@ float squaredDistanceSoA(const PixelSoA& soa, int i, int j);
 // Mean shift using SoA - brute force O(n^2), 5D feature space (x, y, R, G, B)
 MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwidth,
                              int max_iter = 100, float tol = 1e-3f,
-                             bool show_pbar = false);
+                             bool show_pbar = false, KernelFn kernel = nullptr);
 
 #endif // MEANSHIFT_SOA_H
