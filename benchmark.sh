@@ -6,6 +6,10 @@
 #   bash benchmark.sh              # full matrix, 5 runs each
 #   bash benchmark.sh --dry-run    # print what would run, don't execute
 #
+# Matrix:
+#   Sequential : seq, soa          × images × bandwidths × 1 thread  × NUM_RUNS
+#   Parallel   : omp, omp_soa      × images × bandwidths × THREADS   × NUM_RUNS
+#
 # Output: results/benchmark_YYMMDD_HHMMSS.csv
 
 set -euo pipefail
@@ -15,6 +19,7 @@ set -euo pipefail
 BINARY="./build/mean_shift_seq"
 MAX_ITER=10
 NUM_RUNS=5
+KERNEL="flat"
 
 # Images to benchmark (relative paths from project root)
 IMAGES=(
@@ -22,10 +27,10 @@ IMAGES=(
     "Images/red400.png"             # 400x400,   small, solid colour
     "Images/green400.png"           # 400x400,   small, solid colour
     "Images/2.png"                  # 333x500,   medium, natural photo
-    "BSD500/216041.jpg"  # 481x321,   medium, natural photo
-    "BSD500/188005.jpg"  # 481x321,   medium, natural photo
-    "BSD500/242078.jpg"  # 481x321,   medium, natural photo
-    "BSD500/246016.jpg"  # 481x321,   medium, natural photo
+    "BSD500/216041.jpg"             # 481x321,   medium, natural photo
+    "BSD500/188005.jpg"             # 481x321,   medium, natural photo
+    "BSD500/242078.jpg"             # 481x321,   medium, natural photo
+    "BSD500/246016.jpg"             # 481x321,   medium, natural photo
     "BSD500/353013.jpg"             # 481x321,   medium, natural photo
     "Images/clusters_800.png"       # 800x600,   medium, few flat clusters
     "Images/gradient_800.png"       # 800x600,   medium, smooth gradient
@@ -33,9 +38,15 @@ IMAGES=(
     "Images/parrots.jpg"            # 3000x2000,  large, complex
 )
 
-ALGORITHMS=("seq" "soa")
+# Sequential algorithms — always run with threads=1
+SEQ_ALGORITHMS=("seq" "soa")
+
+# Parallel algorithms — run once per entry in THREADS
+OMP_ALGORITHMS=("omp" "omp_soa")
 
 BANDWIDTHS=(20 50 100)
+
+THREADS=(1 2 4 8 12 24)
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -69,7 +80,7 @@ mkdir -p results
 TIMESTAMP=$(date +%y%m%d_%H%M%S)
 CSV="results/benchmark_${TIMESTAMP}.csv"
 
-HEADER="image,algorithm,bandwidth,run,iterations,total_ms,shift_ms,avg_iter_ms"
+HEADER="image,algorithm,kernel,threads,bandwidth,run,iterations,total_ms,shift_ms,avg_iter_ms"
 echo "$HEADER" > "$CSV"
 
 # ── Count total runs ──────────────────────────────────────────────────────────
@@ -77,50 +88,76 @@ echo "$HEADER" > "$CSV"
 total=0
 for img in "${IMAGES[@]}"; do
     [[ -f "$img" ]] || continue
-    for algo in "${ALGORITHMS[@]}"; do
-        for bw in "${BANDWIDTHS[@]}"; do
-            total=$(( total + NUM_RUNS ))
-        done
+    for bw in "${BANDWIDTHS[@]}"; do
+        # sequential: 1 thread count per algo
+        total=$(( total + ${#SEQ_ALGORITHMS[@]} * NUM_RUNS ))
+        # parallel: one run per thread count per algo
+        total=$(( total + ${#OMP_ALGORITHMS[@]} * ${#THREADS[@]} * NUM_RUNS ))
     done
 done
 
-echo "Benchmark: ${#IMAGES[@]} images × ${#ALGORITHMS[@]} algos × ${#BANDWIDTHS[@]} bandwidths × ${NUM_RUNS} runs = $total total runs" >&2
-echo "Output: $CSV" >&2
+echo "Benchmark:" >&2
+echo "  Sequential : ${SEQ_ALGORITHMS[*]} — threads=1" >&2
+echo "  Parallel   : ${OMP_ALGORITHMS[*]} — threads=${THREADS[*]}" >&2
+echo "  Images     : ${#IMAGES[@]}  Bandwidths: ${#BANDWIDTHS[@]}  Runs: ${NUM_RUNS}" >&2
+echo "  Total runs : $total" >&2
+echo "  Output     : $CSV" >&2
 echo "" >&2
+
 # ── Run matrix ────────────────────────────────────────────────────────────────
+
 run_idx=0
+
+run_one() {
+    local img="$1" algo="$2" threads="$3" bw="$4" run="$5"
+    run_idx=$(( run_idx + 1 ))
+    printf "\r[%d/%d] %-30s %-10s threads=%-3d bw=%-4d run=%d   " \
+        "$run_idx" "$total" "$img" "$algo" "$threads" "$bw" "$run" >&2
+
+    if (( DRY_RUN )); then
+        return
+    fi
+
+    local output
+    output=$(OMP_NUM_THREADS="$threads" \
+        "$BINARY" "$img" "$bw" "$MAX_ITER" "$algo" \
+            --kernel "$KERNEL" --no-display --no-output 2>/dev/null) || {
+        echo "" >&2
+        echo "  FAILED: $img $algo threads=$threads bw=$bw run=$run" >&2
+        return
+    }
+
+    local iterations total_ms shift_ms avg_iter_ms
+    iterations=$(echo "$output"  | grep -oP 'Iterations:\s+\K[0-9]+'    || echo "0")
+    total_ms=$(echo "$output"    | grep -oP 'Total:\s+\K[0-9.]+'         || echo "0")
+    shift_ms=$(echo "$output"    | grep -oP 'Pixel shifting:\s+\K[0-9.]+' || echo "0")
+    avg_iter_ms=$(echo "$output" | grep -oP 'Avg:\s+\K[0-9.]+'           || echo "0")
+
+    echo "$img,$algo,$KERNEL,$threads,$bw,$run,$iterations,$total_ms,$shift_ms,$avg_iter_ms" >> "$CSV"
+}
+
 for img in "${IMAGES[@]}"; do
     [[ -f "$img" ]] || { echo "  SKIP $img (not found)" >&2; continue; }
 
     # Warmup execution for this image (not recorded)
-    echo "Warming up cache for: $img, ${ALGORITHMS[0]}, bw=${BANDWIDTHS[0]}" >&2
-    "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "${ALGORITHMS[0]}" --no-display --no-output >/dev/null 2>&1 || true
+    echo "Warming up: $img" >&2
+    "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "${SEQ_ALGORITHMS[0]}" \
+        --kernel "$KERNEL" --no-display --no-output >/dev/null 2>&1 || true
 
-    for algo in "${ALGORITHMS[@]}"; do
-        for bw in "${BANDWIDTHS[@]}"; do
+    for bw in "${BANDWIDTHS[@]}"; do
+        # Sequential algorithms — fixed threads=1
+        for algo in "${SEQ_ALGORITHMS[@]}"; do
             for run in $(seq 1 "$NUM_RUNS"); do
-                run_idx=$(( run_idx + 1 ))
-                printf "\r[%d/%d] %-15s %-10s bw=%-4d run=%d   " \
-                    "$run_idx" "$total" "$img" "$algo" "$bw" "$run" >&2
+                run_one "$img" "$algo" 1 "$bw" "$run"
+            done
+        done
 
-                if (( DRY_RUN )); then
-                    continue
-                fi
-
-                # Run the binary and capture stdout
-                output=$("$BINARY" "$img" "$bw" "$MAX_ITER" "$algo" --no-display --no-output 2>/dev/null) || {
-                    echo "" >&2
-                    echo "  FAILED: $img $algo bw=$bw run=$run" >&2
-                    continue
-                }
-
-                # Parse fields from stdout
-                iterations=$(echo "$output" | grep -oP 'Iterations:\s+\K[0-9]+' || echo "0")
-                total_ms=$(echo "$output"   | grep -oP 'Total:\s+\K[0-9.]+' || echo "0")
-                shift_ms=$(echo "$output"   | grep -oP 'Pixel shifting:\s+\K[0-9.]+' || echo "0")
-                avg_iter_ms=$(echo "$output" | grep -oP 'Avg:\s+\K[0-9.]+' || echo "0")
-
-                echo "$img,$algo,$bw,$run,$iterations,$total_ms,$shift_ms,$avg_iter_ms" >> "$CSV"
+        # Parallel algorithms — iterate over thread counts
+        for algo in "${OMP_ALGORITHMS[@]}"; do
+            for threads in "${THREADS[@]}"; do
+                for run in $(seq 1 "$NUM_RUNS"); do
+                    run_one "$img" "$algo" "$threads" "$bw" "$run"
+                done
             done
         done
     done

@@ -4,7 +4,7 @@
 #include <cstdio>
 
 // Helper to convert AoS float buffer to SoA representation
-void convertToFloatSoA(const std::vector<float>& current, PixelSoA& soa, int width) {
+void convertToFloatSoA(const std::vector<float>& current, ImageSoA& soa, int width) {
     soa.n = static_cast<int>(current.size() / 3);
     soa.r.resize(soa.n);
     soa.g.resize(soa.n);
@@ -22,7 +22,7 @@ void convertToFloatSoA(const std::vector<float>& current, PixelSoA& soa, int wid
 }
 
 // Helper to convert SoA back to AoS float buffer
-void convertFromFloatSoA(const PixelSoA& soa, std::vector<float>& current) {
+void convertFromFloatSoA(const ImageSoA& soa, std::vector<float>& current) {
     current.resize(soa.n * 3);
     for(int i = 0; i < soa.n; ++i) {
         current[i * 3 + 0] = std::max(0.0f, std::min(soa.r[i], 255.0f));
@@ -32,7 +32,7 @@ void convertFromFloatSoA(const PixelSoA& soa, std::vector<float>& current) {
 }
 
 // 5D squared distance between pixels i and j within the same SoA struct
-float squaredDistanceSoA(const PixelSoA& soa, int i, int j) {
+float squaredDistanceSoA(const ImageSoA& soa, int i, int j) {
     float dcol = soa.x[i] - soa.x[j];
     float drow = soa.y[i] - soa.y[j];
     float dr = soa.r[i] - soa.r[j];
@@ -51,7 +51,7 @@ MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwi
     std::vector<float> current;
     convertToFloat(data, current);
 
-    PixelSoA soa;
+    ImageSoA soa;
     convertToFloatSoA(current, soa, width);
 
     const float bandwidth_sq = bandwidth * bandwidth;

@@ -16,7 +16,7 @@ MeanShiftResult meanShiftSoAOMP(std::vector<uint8_t>& data, int width, float ban
     std::vector<float> current;
     convertToFloat(data, current);
 
-    PixelSoA soa;
+    ImageSoA soa;
     convertToFloatSoA(current, soa, width);
 
     const float bandwidth_sq = bandwidth * bandwidth;

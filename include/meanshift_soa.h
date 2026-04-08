@@ -6,7 +6,7 @@
 #include <vector>
 
 // SoA pixel representation - separate channels for better parallelism
-struct PixelSoA {
+struct ImageSoA {
     std::vector<float> r;
     std::vector<float> g;
     std::vector<float> b;
@@ -24,13 +24,13 @@ struct NeighborAccumulator {
 };
 
 // Convert AoS float buffer to SoA representation
-void convertToFloatSoA(const std::vector<float>& current, PixelSoA& soa, int width);
+void convertToFloatSoA(const std::vector<float>& current, ImageSoA& soa, int width);
 
 // Convert SoA back to AoS float buffer
-void convertFromFloatSoA(const PixelSoA& soa, std::vector<float>& current);
+void convertFromFloatSoA(const ImageSoA& soa, std::vector<float>& current);
 
 // SoA version of 5D squared distance between pixels i and j
-float squaredDistanceSoA(const PixelSoA& soa, int i, int j);
+float squaredDistanceSoA(const ImageSoA& soa, int i, int j);
 
 // Mean shift using SoA - brute force O(n^2), 5D feature space (x, y, R, G, B)
 MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwidth,
