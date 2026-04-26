@@ -1,7 +1,7 @@
 #ifndef MEANSHIFT_SOA_H
 #define MEANSHIFT_SOA_H
 
-#include "meanshift.h"
+#include "meanshift_baseline.h"
 #include <cstdint>
 #include <vector>
 

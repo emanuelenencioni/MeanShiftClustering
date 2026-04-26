@@ -8,8 +8,9 @@
 #include <ctime>
 #include <filesystem>
 #include <opencv2/opencv.hpp>
+
 #include "STBImage.h"
-#include "meanshift.h"
+#include "meanshift_seq.h"
 #include "meanshift_soa.h"
 #include "meanshift_baseline.h"
 #include "meanshift_omp.h"

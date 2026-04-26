@@ -1,7 +1,7 @@
 #ifndef MEANSHIFT_OMP_H
 #define MEANSHIFT_OMP_H
 
-#include "meanshift.h"
+#include "meanshift_baseline.h"
 #include <cstdint>
 #include <vector>
 

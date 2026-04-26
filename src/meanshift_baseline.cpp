@@ -3,6 +3,61 @@
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <iostream>
+
+/* --- Shared utility functions -------------------------------------------- */
+
+void convertToFloat(const std::vector<uint8_t>& data, std::vector<float>& out) {
+    out.resize(data.size());
+    for(size_t i = 0; i < data.size(); ++i)
+        out[i] = static_cast<float>(data[i]);
+}
+
+void convertFromFloat(const std::vector<float>& current, std::vector<uint8_t>& data) {
+    for(size_t i = 0; i < data.size(); ++i) {
+        float val = std::max(0.0f, std::min(current[i], 255.0f));
+        data[i] = static_cast<uint8_t>(std::round(val));
+    }
+}
+
+void printProgressBar(int iter, int max_iter, float max_change) {
+    const int bar_width = 30;
+    float progress = static_cast<float>(iter) / max_iter;
+    int filled = static_cast<int>(progress * bar_width);
+
+    std::fprintf(stderr, "\rIter [%3d/%3d] [", iter, max_iter);
+    for(int i = 0; i < bar_width; ++i)
+        std::fputc(i < filled ? '#' : '.', stderr);
+    std::fprintf(stderr, "] max_change=%7.3f", max_change);
+    std::fflush(stderr);
+}
+
+/* --- Kernel functions ---------------------------------------------------- */
+
+static float kernelFlat(float sq_dist, float bw_sq) {
+    return sq_dist <= bw_sq ? 1.0f : 0.0f;
+}
+
+static float kernelGaussian(float sq_dist, float bw_sq) {
+    if(sq_dist > bw_sq) return 0.0f;
+    return std::exp(-sq_dist / (2.0f * bw_sq));
+}
+
+static float kernelEpanechnikov(float sq_dist, float bw_sq) {
+    if(sq_dist > bw_sq) return 0.0f;
+    return 1.0f - sq_dist / bw_sq;
+}
+
+KernelFn makeKernel(const std::string& name) {
+    if(name == "flat")           return kernelFlat;
+    if(name == "gaussian")       return kernelGaussian;
+    if(name == "epanechnikov")   return kernelEpanechnikov;
+    std::cerr << "Unknown kernel: " << name
+              << ". Valid options: flat, gaussian, epanechnikov" << std::endl;
+    std::exit(1);
+}
+
+/* --- Baseline algorithm -------------------------------------------------- */
 
 /* 5D squared distance between pixels i and j using flat stride-3 float buffer.
  * Spatial coords (x, y) are recomputed from the pixel index on every call —

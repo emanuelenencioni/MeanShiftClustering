@@ -1,23 +1,11 @@
-#include "meanshift.h"
 #include <chrono>
 #include <algorithm>
 #include <cstdio>
-#include <iostream>
 #include <cstdlib>
 
-void printProgressBar(int iter, int max_iter, float max_change) {
-    const int bar_width = 30;
-    float progress = static_cast<float>(iter) / max_iter;
-    int filled = static_cast<int>(progress * bar_width);
+#include "meanshift_seq.h"
 
-    std::fprintf(stderr, "\rIter [%3d/%3d] [", iter, max_iter);
-    for(int i = 0; i < bar_width; ++i)
-        std::fputc(i < filled ? '#' : '.', stderr);
-    std::fprintf(stderr, "] max_change=%7.3f", max_change);
-    std::fflush(stderr);
-}
-
-/* 5D squared distance between two pixels: spatial (x, y) + color (r, g, b). */
+// 5D squared distance between two pixels: spatial (x, y) + color (r, g, b).
 static float squaredDistance(const Pixel& a, const Pixel& b) {
     float dx = a.x - b.x;
     float dy = a.y - b.y;
@@ -51,44 +39,6 @@ static void fromPixels(const std::vector<Pixel>& pixels, std::vector<uint8_t>& d
     }
 }
 
-void convertToFloat(const std::vector<uint8_t>& data, std::vector<float>& out) {
-    out.resize(data.size());
-    for(size_t i = 0; i < data.size(); ++i)
-        out[i] = static_cast<float>(data[i]);
-}
-
-void convertFromFloat(const std::vector<float>& current, std::vector<uint8_t>& data) {
-    for(size_t i = 0; i < data.size(); ++i) {
-        float val = std::max(0.0f, std::min(current[i], 255.0f));
-        data[i] = static_cast<uint8_t>(std::round(val));
-    }
-}
-
-/* --- Kernel functions ---------------------------------------------------- */
-
-static float kernelFlat(float sq_dist, float bw_sq) {
-    return sq_dist <= bw_sq ? 1.0f : 0.0f;
-}
-
-static float kernelGaussian(float sq_dist, float bw_sq) {
-    if(sq_dist > bw_sq) return 0.0f;
-    return std::exp(-sq_dist / (2.0f * bw_sq));
-}
-
-static float kernelEpanechnikov(float sq_dist, float bw_sq) {
-    if(sq_dist > bw_sq) return 0.0f;
-    return 1.0f - sq_dist / bw_sq;
-}
-
-KernelFn makeKernel(const std::string& name) {
-    if(name == "flat")           return kernelFlat;
-    if(name == "gaussian")       return kernelGaussian;
-    if(name == "epanechnikov")   return kernelEpanechnikov;
-    std::cerr << "Unknown kernel: " << name
-              << ". Valid options: flat, gaussian, epanechnikov" << std::endl;
-    std::exit(1);
-}
-
 /* --- Mean shift ---------------------------------------------------------- */
 
 // Brute-force: O(n^2) per iteration, 5D feature space (x, y, R, G, B)
@@ -96,7 +46,7 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth
                           int max_iter, float tol, bool show_pbar, KernelFn kernel) {
     using clock = std::chrono::steady_clock;
 
-    if(!kernel) kernel = kernelFlat;
+    if(!kernel) kernel = makeKernel("flat");
 
     std::vector<Pixel> current;
     toPixels(data, current, width);
