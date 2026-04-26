@@ -94,8 +94,7 @@ MeanShiftResult meanShiftOMP(std::vector<uint8_t>& data, int width, float bandwi
                 next[i] = src;
             }
 
-            if(change > max_change)
-                max_change = change;
+            max_change = std::max(max_change, change);
         }
 
         auto t_shift_end = clock::now();
