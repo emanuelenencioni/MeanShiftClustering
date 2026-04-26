@@ -47,8 +47,11 @@ MeanShiftResult meanShiftOMP(std::vector<uint8_t>& data, int width, float bandwi
 
     if(!kernel) kernel = makeKernel("flat");
 
+    auto t_conv_start = clock::now();
     std::vector<Pixel> current;
     toPixelsOMP(data, current, width);
+    auto t_conv_end = clock::now();
+    double convert_ms = std::chrono::duration<double, std::milli>(t_conv_end - t_conv_start).count();
 
     const float bandwidth_sq = bandwidth * bandwidth;
     const int n_pixels = static_cast<int>(current.size());
@@ -114,7 +117,10 @@ MeanShiftResult meanShiftOMP(std::vector<uint8_t>& data, int width, float bandwi
     if(show_pbar)
         std::fprintf(stderr, "\n");
 
+    auto t_conv_out_start = clock::now();
     fromPixelsOMP(current, data);
+    auto t_conv_out_end = clock::now();
+    convert_ms += std::chrono::duration<double, std::milli>(t_conv_out_end - t_conv_out_start).count();
 
-    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, iter_details};
+    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, convert_ms, iter_details};
 }

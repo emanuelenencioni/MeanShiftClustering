@@ -88,9 +88,12 @@ MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
     uint8_t* raw = image.rgb_image;
 
     // Load raw uint8_t* into float working buffer
+    auto t_conv_start = clock::now();
     std::vector<float> current(n_pixels * 3);
     for(int i = 0; i < n_pixels * 3; ++i)
         current[i] = static_cast<float>(raw[i]);
+    auto t_conv_end = clock::now();
+    double convert_ms = std::chrono::duration<double, std::milli>(t_conv_end - t_conv_start).count();
 
     const float bandwidth_sq = bandwidth * bandwidth;
 
@@ -157,10 +160,13 @@ MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
         std::fprintf(stderr, "\n");
 
     // Write results back to raw uint8_t* buffer
+    auto t_conv_out_start = clock::now();
     for(int i = 0; i < n_pixels * 3; ++i) {
         float val = std::max(0.0f, std::min(current[i], 255.0f));
         raw[i] = static_cast<uint8_t>(std::round(val));
     }
+    auto t_conv_out_end = clock::now();
+    convert_ms += std::chrono::duration<double, std::milli>(t_conv_out_end - t_conv_out_start).count();
 
-    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, iter_details};
+    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, convert_ms, iter_details};
 }

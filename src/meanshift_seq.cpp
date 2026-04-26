@@ -48,8 +48,11 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth
 
     if(!kernel) kernel = makeKernel("flat");
 
+    auto t_conv_start = clock::now();
     std::vector<Pixel> current;
     toPixels(data, current, width);
+    auto t_conv_end = clock::now();
+    double convert_ms = std::chrono::duration<double, std::milli>(t_conv_end - t_conv_start).count();
 
     const float bandwidth_sq = bandwidth * bandwidth;
     const int n_pixels = static_cast<int>(current.size());
@@ -58,8 +61,10 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth
     int iter = 0;
     std::vector<IterationInfo> iter_details;
 
+    // Hoist next outside the iteration loop — allocate once, reuse every iteration.
+    std::vector<Pixel> next(n_pixels);
+
     for(; iter < max_iter; ++iter) {
-        std::vector<Pixel> next(n_pixels);
         float max_change = 0.0f;
 
         auto t_shift_start = clock::now();
@@ -113,7 +118,10 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth
     if(show_pbar)
         std::fprintf(stderr, "\n");
 
+    auto t_conv_out_start = clock::now();
     fromPixels(current, data);
+    auto t_conv_out_end = clock::now();
+    convert_ms += std::chrono::duration<double, std::milli>(t_conv_out_end - t_conv_out_start).count();
 
-    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, iter_details};
+    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, convert_ms, iter_details};
 }

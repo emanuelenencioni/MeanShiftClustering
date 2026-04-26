@@ -48,11 +48,14 @@ MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwi
 
     if(!kernel) kernel = makeKernel("flat");
 
+    auto t_conv_start = clock::now();
     std::vector<float> current;
     convertToFloat(data, current);
 
     ImageSoA soa;
     convertToFloatSoA(current, soa, width);
+    auto t_conv_end = clock::now();
+    double convert_ms = std::chrono::duration<double, std::milli>(t_conv_end - t_conv_start).count();
 
     const float bandwidth_sq = bandwidth * bandwidth;
     int n_pixels = soa.n;
@@ -61,10 +64,12 @@ MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwi
     int iter = 0;
     std::vector<IterationInfo> iter_details;
 
+    // Hoist next buffers outside the iteration loop — allocate once, reuse every iteration.
+    std::vector<float> next_r(n_pixels);
+    std::vector<float> next_g(n_pixels);
+    std::vector<float> next_b(n_pixels);
+
     for(; iter < max_iter; ++iter) {
-        std::vector<float> next_r(n_pixels);
-        std::vector<float> next_g(n_pixels);
-        std::vector<float> next_b(n_pixels);
         float max_change = 0.0f;
 
         auto t_shift_start = clock::now();
@@ -126,8 +131,11 @@ MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwi
     if(show_pbar)
         std::fprintf(stderr, "\n");
 
+    auto t_conv_out_start = clock::now();
     convertFromFloatSoA(soa, current);
     convertFromFloat(current, data);
+    auto t_conv_out_end = clock::now();
+    convert_ms += std::chrono::duration<double, std::milli>(t_conv_out_end - t_conv_out_start).count();
 
-    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, iter_details};
+    return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, convert_ms, iter_details};
 }

@@ -28,6 +28,7 @@ struct IterationInfo {
 struct MeanShiftResult {
     int iterations;
     double pixel_shift_ms;
+    double convert_ms;   // input + output conversion time (toPixels / fromPixels)
     std::vector<IterationInfo> iter_details;
 };
 

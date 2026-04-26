@@ -147,6 +147,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Data conversion:   " << ms(t_conv_start, t_conv_end) << " ms" << std::endl;
     std::cout << "  Mean shift total:  " << ms(t_ms_start, t_ms_end) << " ms" << std::endl;
     std::cout << "    Pixel shifting:  " << result.pixel_shift_ms << " ms" << std::endl;
+    std::cout << "    Convert:         " << result.convert_ms << " ms" << std::endl;
     std::cout << "  Result conversion: " << ms(t_out_start, t_out_end) << " ms" << std::endl;
     std::cout << "  Total:             " << ms(t_total_start, t_total_end) << " ms" << std::endl;
     std::cout << "  Iterations:        " << result.iterations << std::endl;
@@ -191,6 +192,7 @@ int main(int argc, char* argv[]) {
         log << "  Data conversion:   " << ms(t_conv_start, t_conv_end) << " ms\n";
         log << "  Mean shift total:  " << ms(t_ms_start, t_ms_end) << " ms\n";
         log << "    Pixel shifting:  " << result.pixel_shift_ms << " ms\n";
+        log << "    Convert:         " << result.convert_ms << " ms\n";
         log << "  Result conversion: " << ms(t_out_start, t_out_end) << " ms\n";
         log << "  Total:             " << ms(t_total_start, t_total_end) << " ms\n";
         log << "  Iterations:        " << result.iterations << "\n";
