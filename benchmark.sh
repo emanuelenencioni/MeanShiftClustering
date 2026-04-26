@@ -80,7 +80,7 @@ mkdir -p results
 TIMESTAMP=$(date +%y%m%d_%H%M%S)
 CSV="results/benchmark_${TIMESTAMP}.csv"
 
-HEADER="image,algorithm,kernel,threads,bandwidth,run,iterations,total_ms,shift_ms,avg_iter_ms"
+HEADER="image,algorithm,kernel,threads,bandwidth,run,iterations,total_ms,shift_ms,convert_ms,avg_iter_ms"
 echo "$HEADER" > "$CSV"
 
 # ── Count total runs ──────────────────────────────────────────────────────────
@@ -127,26 +127,27 @@ run_one() {
         return
     }
 
-    local iterations total_ms shift_ms avg_iter_ms
-    iterations=$(echo "$output"  | grep -oP 'Iterations:\s+\K[0-9]+'    || echo "0")
-    total_ms=$(echo "$output"    | grep -oP 'Total:\s+\K[0-9.]+'         || echo "0")
-    shift_ms=$(echo "$output"    | grep -oP 'Pixel shifting:\s+\K[0-9.]+' || echo "0")
-    avg_iter_ms=$(echo "$output" | grep -oP 'Avg:\s+\K[0-9.]+'           || echo "0")
+    local iterations total_ms shift_ms convert_ms avg_iter_ms
+    iterations=$(echo "$output"  | grep -oP 'Iterations:\s+\K[0-9]+'       || echo "0")
+    total_ms=$(echo "$output"    | grep -oP 'Total:\s+\K[0-9.]+'            || echo "0")
+    shift_ms=$(echo "$output"    | grep -oP 'Pixel shifting:\s+\K[0-9.]+'   || echo "0")
+    convert_ms=$(echo "$output"  | grep -oP 'Convert:\s+\K[0-9.]+'          || echo "0")
+    avg_iter_ms=$(echo "$output" | grep -oP 'Avg:\s+\K[0-9.]+'              || echo "0")
 
-    echo "$img,$algo,$KERNEL,$threads,$bw,$run,$iterations,$total_ms,$shift_ms,$avg_iter_ms" >> "$CSV"
+    echo "$img,$algo,$KERNEL,$threads,$bw,$run,$iterations,$total_ms,$shift_ms,$convert_ms,$avg_iter_ms" >> "$CSV"
 }
 
 for img in "${IMAGES[@]}"; do
     [[ -f "$img" ]] || { echo "  SKIP $img (not found)" >&2; continue; }
 
-    # Warmup execution for this image (not recorded)
-    echo "Warming up: $img" >&2
-    "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "${SEQ_ALGORITHMS[0]}" \
-        --kernel "$KERNEL" --no-display --no-output >/dev/null 2>&1 || true
-
     for bw in "${BANDWIDTHS[@]}"; do
         # Sequential algorithms — fixed threads=1
         for algo in "${SEQ_ALGORITHMS[@]}"; do
+            # Warmup: warm page cache and branch predictors for this (img, algo)
+            if (( ! DRY_RUN )); then
+                OMP_NUM_THREADS=1 "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "$algo" \
+                    --kernel "$KERNEL" --no-display --no-output >/dev/null 2>&1 || true
+            fi
             for run in $(seq 1 "$NUM_RUNS"); do
                 run_one "$img" "$algo" 1 "$bw" "$run"
             done
@@ -155,6 +156,11 @@ for img in "${IMAGES[@]}"; do
         # Parallel algorithms — iterate over thread counts
         for algo in "${OMP_ALGORITHMS[@]}"; do
             for threads in "${THREADS[@]}"; do
+                # Warmup: ensure OMP thread pool is live at the correct thread count
+                if (( ! DRY_RUN )); then
+                    OMP_NUM_THREADS="$threads" "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "$algo" \
+                        --kernel "$KERNEL" --no-display --no-output >/dev/null 2>&1 || true
+                fi
                 for run in $(seq 1 "$NUM_RUNS"); do
                     run_one "$img" "$algo" "$threads" "$bw" "$run"
                 done
