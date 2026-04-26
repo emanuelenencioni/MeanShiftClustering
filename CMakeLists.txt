@@ -25,3 +25,11 @@ src/meanshift_omp_soa.cpp
 )
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_include_directories(${PROJECT_NAME} PRIVATE include )
+
+add_executable(kernel_bench
+    src/kernel_bench.cpp
+    src/meanshift_baseline.cpp
+    src/STBImage.cpp
+)
+target_include_directories(kernel_bench PRIVATE include)
+target_link_libraries(kernel_bench ${OpenCV_LIBS})
