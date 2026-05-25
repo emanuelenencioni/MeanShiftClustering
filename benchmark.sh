@@ -26,25 +26,62 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 BINARY="./build/mean_shift_seq"
-MAX_ITER=10
+# MAX_ITER=5: runs 5 iterations per benchmark invocation.
+# Enough to measure realistic per-iteration cost while keeping total runtime
+# manageable (~20 hours for the full matrix on a 12-core machine — run overnight).
+# All variants are brute-force O(n^2); images capped at ~68K pixels so that
+# seq at 1 thread stays under ~105 s per run.
+MAX_ITER=5
 NUM_RUNS=5
-KERNEL="flat"
 
-# Images to benchmark (relative paths from project root)
+# Dataset: all 25 BSD500-derived images — 5 sources × 5 resolution tiers.
+# Post-processing averages timing results across the 5 sources within each
+# tier, giving a tier-representative mean that is not biased by any single
+# source image's content complexity.
+#
+# Resolution tiers (pixel counts follow an approximately geometric progression):
+#
+#   Tier | WxH      | Pixels  | Source IDs (all 5 run at this tier)
+#   -----+----------+---------+-------------------------------------
+#     1  | 100x67   |   6.7K  | 55067, 76002, 124084, 134052, 187039
+#     2  | 150x100  |  15.0K  | 55067, 76002, 124084, 134052, 187039
+#     3  | 200x133  |  26.6K  | 55067, 76002, 124084, 134052, 187039
+#     4  | 260x174  |  45.2K  | 55067, 76002, 124084, 134052, 187039
+#     5  | 320x214  |  68.5K  | 55067, 76002, 124084, 134052, 187039
+#
+# Estimated seq 1T per run: tier1 ~0.2s, tier5 ~105s.
+# Total runs: 25 images × (2 seq + 2 omp × 6 threads) × 3 bw × 5 runs = 5250.
 IMAGES=(
-    "Images/solid_100.png"          # 100x100,   tiny,  solid colour
-    "Images/red400.png"             # 400x400,   small, solid colour
-    "Images/green400.png"           # 400x400,   small, solid colour
-    "Images/2.png"                  # 333x500,   medium, natural photo
-    "BSD500/216041.jpg"             # 481x321,   medium, natural photo
-    "BSD500/188005.jpg"             # 481x321,   medium, natural photo
-    "BSD500/242078.jpg"             # 481x321,   medium, natural photo
-    "BSD500/246016.jpg"             # 481x321,   medium, natural photo
-    "BSD500/353013.jpg"             # 481x321,   medium, natural photo
-    "Images/clusters_800.png"       # 800x600,   medium, few flat clusters
-    "Images/gradient_800.png"       # 800x600,   medium, smooth gradient
-    "Images/complex_textures.jpg"   # large, high complexity
-    "Images/parrots.jpg"            # 3000x2000,  large, complex
+    # tier 1 — 100×67 — 6 700 px
+    "Images/bsd_55067_100x67.jpg"
+    "Images/bsd_76002_100x67.jpg"
+    "Images/bsd_124084_100x67.jpg"
+    "Images/bsd_134052_100x67.jpg"
+    "Images/bsd_187039_100x67.jpg"
+    # tier 2 — 150×100 — 15 000 px
+    "Images/bsd_55067_150x100.jpg"
+    "Images/bsd_76002_150x100.jpg"
+    "Images/bsd_124084_150x100.jpg"
+    "Images/bsd_134052_150x100.jpg"
+    "Images/bsd_187039_150x100.jpg"
+    # tier 3 — 200×133 — 26 600 px
+    "Images/bsd_55067_200x133.jpg"
+    "Images/bsd_76002_200x133.jpg"
+    "Images/bsd_124084_200x133.jpg"
+    "Images/bsd_134052_200x133.jpg"
+    "Images/bsd_187039_200x133.jpg"
+    # tier 4 — 260×174 — 45 240 px
+    "Images/bsd_55067_260x174.jpg"
+    "Images/bsd_76002_260x174.jpg"
+    "Images/bsd_124084_260x174.jpg"
+    "Images/bsd_134052_260x174.jpg"
+    "Images/bsd_187039_260x174.jpg"
+    # tier 5 — 320×214 — 68 480 px
+    "Images/bsd_55067_320x214.jpg"
+    "Images/bsd_76002_320x214.jpg"
+    "Images/bsd_124084_320x214.jpg"
+    "Images/bsd_134052_320x214.jpg"
+    "Images/bsd_187039_320x214.jpg"
 )
 
 # Sequential algorithms — always run with threads=1
@@ -126,10 +163,10 @@ if [[ -n "$RESUME_CSV" ]]; then
     echo "Resume: reading $RESUME_CSV ..." >&2
 
     # Count rows per (image,algo,threads,bw) key.
-    # CSV columns: image,algorithm,kernel,threads,bandwidth,run,...
-    #              1     2         3      4       5         6
+    # CSV columns: image,algorithm,threads,bandwidth,run,...
+    #              1     2         3       4         5
     declare -A _count=()
-    while IFS=, read -r img algo _kern threads bw _rest; do
+    while IFS=, read -r img algo threads bw _rest; do
         [[ "$img" == "image" ]] && continue   # skip header
         key="${img}|${algo}|${threads}|${bw}"
         _count["$key"]=$(( ${_count["$key"]:-0} + 1 ))
@@ -190,7 +227,7 @@ if [[ -n "$RESUME_CSV" ]]; then
 else
     TIMESTAMP=$(date +%y%m%d_%H%M%S)
     CSV="results/benchmark_${TIMESTAMP}.csv"
-    HEADER="image,algorithm,kernel,threads,bandwidth,run,iterations,total_ms,shift_ms,convert_ms,avg_iter_ms"
+    HEADER="image,algorithm,threads,bandwidth,run,iterations,total_ms,shift_ms,convert_ms,avg_iter_ms"
     echo "$HEADER" > "$CSV"
 fi
 
@@ -254,10 +291,10 @@ run_one() {
 
     local output
     output=$(OMP_NUM_THREADS="$threads" \
-        "$BINARY" "$img" "$bw" "$MAX_ITER" "$algo" \
-            --kernel "$KERNEL" --no-display --no-output 2>/dev/null) || {
+        timeout 360 "$BINARY" "$img" "$bw" "$MAX_ITER" "$algo" \
+            --no-display --no-output 2>/dev/null) || {
         echo "" >&2
-        echo "  FAILED: $img $algo threads=$threads bw=$bw run=$run" >&2
+        echo "  FAILED/TIMEOUT: $img $algo threads=$threads bw=$bw run=$run" >&2
         return
     }
 
@@ -268,7 +305,7 @@ run_one() {
     convert_ms=$(echo "$output"  | grep -oP 'Convert:\s+\K[0-9.]+'          || echo "0")
     avg_iter_ms=$(echo "$output" | grep -oP 'Avg:\s+\K[0-9.]+'              || echo "0")
 
-    echo "$img,$algo,$KERNEL,$threads,$bw,$run,$iterations,$total_ms,$shift_ms,$convert_ms,$avg_iter_ms" >> "$CSV"
+    echo "$img,$algo,$threads,$bw,$run,$iterations,$total_ms,$shift_ms,$convert_ms,$avg_iter_ms" >> "$CSV"
 }
 
 for img in "${IMAGES[@]}"; do
@@ -282,8 +319,8 @@ for img in "${IMAGES[@]}"; do
             fi
             # Warmup
             if (( ! DRY_RUN )); then
-                OMP_NUM_THREADS=1 "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "$algo" \
-                    --kernel "$KERNEL" --no-display --no-output >/dev/null 2>&1 || true
+                OMP_NUM_THREADS=1 timeout 360 "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "$algo" \
+                    --no-display --no-output >/dev/null 2>&1 || true
             fi
             for run in $(seq 1 "$NUM_RUNS"); do
                 run_one "$img" "$algo" 1 "$bw" "$run"
@@ -298,8 +335,8 @@ for img in "${IMAGES[@]}"; do
                 fi
                 # Warmup
                 if (( ! DRY_RUN )); then
-                    OMP_NUM_THREADS="$threads" "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "$algo" \
-                        --kernel "$KERNEL" --no-display --no-output >/dev/null 2>&1 || true
+                    OMP_NUM_THREADS="$threads" timeout 360 "$BINARY" "$img" "${BANDWIDTHS[0]}" "$MAX_ITER" "$algo" \
+                        --no-display --no-output >/dev/null 2>&1 || true
                 fi
                 for run in $(seq 1 "$NUM_RUNS"); do
                     run_one "$img" "$algo" "$threads" "$bw" "$run"
