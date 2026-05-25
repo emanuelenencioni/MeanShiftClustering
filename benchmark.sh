@@ -85,7 +85,7 @@ IMAGES=(
 )
 
 # Sequential algorithms — always run with threads=1
-SEQ_ALGORITHMS=("seq" "soa")
+SEQ_ALGORITHMS=("baseline" "seq" "soa")
 
 # Parallel algorithms — run once per entry in THREADS
 OMP_ALGORITHMS=("omp" "omp_soa")
@@ -198,14 +198,14 @@ if [[ -n "$RESUME_CSV" ]]; then
             # Write header
             head -1 "$RESUME_CSV" > "$tmp_csv"
             # For each data row, check if its key is partial; if so, drop it.
-            tail -n +2 "$RESUME_CSV" | while IFS=, read -r img algo _kern threads bw rest; do
+            tail -n +2 "$RESUME_CSV" | while IFS=, read -r img algo threads bw rest; do
                 key="${img}|${algo}|${threads}|${bw}"
                 is_partial=0
                 for pkey in "${partial_keys[@]}"; do
                     [[ "$key" == "$pkey" ]] && { is_partial=1; break; }
                 done
                 if (( is_partial == 0 )); then
-                    echo "$img,$algo,$_kern,$threads,$bw,$rest"
+                    echo "$img,$algo,$threads,$bw,$rest"
                 fi
             done >> "$tmp_csv"
             mv "$tmp_csv" "$RESUME_CSV"
