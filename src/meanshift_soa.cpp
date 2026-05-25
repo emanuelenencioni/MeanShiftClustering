@@ -43,10 +43,8 @@ float squaredDistanceSoA(const ImageSoA& soa, int i, int j) {
 
 // Brute-force mean shift using SoA, 5D feature space (x, y, R, G, B)
 MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwidth,
-                             int max_iter, float tol, bool show_pbar, KernelFn kernel) {
+                             int max_iter, float tol, bool show_pbar) {
     using clock = std::chrono::steady_clock;
-
-    if(!kernel) kernel = makeKernel("flat");
 
     auto t_conv_start = clock::now();
     std::vector<float> current;
@@ -78,12 +76,11 @@ MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwi
             NeighborAccumulator acc;
 
             for(int j = 0; j < n_pixels; ++j) {
-                float w = kernel(squaredDistanceSoA(soa, i, j), bandwidth_sq);
-                if(w > 0.0f) {
-                    acc.sum_r += w * soa.r[j];
-                    acc.sum_g += w * soa.g[j];
-                    acc.sum_b += w * soa.b[j];
-                    acc.weight_sum += w;
+                if(squaredDistanceSoA(soa, i, j) <= bandwidth_sq) {
+                    acc.sum_r += soa.r[j];
+                    acc.sum_g += soa.g[j];
+                    acc.sum_b += soa.b[j];
+                    acc.weight_sum += 1.0f;
                 }
             }
 

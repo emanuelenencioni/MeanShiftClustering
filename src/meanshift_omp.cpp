@@ -42,10 +42,8 @@ static void fromPixelsOMP(const std::vector<Pixel>& pixels, std::vector<uint8_t>
 // Outer loop over pixels is parallelised; Jacobi semantics guarantee no races.
 // next[] is hoisted outside the iteration loop to avoid repeated allocation.
 MeanShiftResult meanShiftOMP(std::vector<uint8_t>& data, int width, float bandwidth,
-                             int max_iter, float tol, bool show_pbar, KernelFn kernel) {
+                             int max_iter, float tol, bool show_pbar) {
     using clock = std::chrono::steady_clock;
-
-    if(!kernel) kernel = makeKernel("flat");
 
     auto t_conv_start = clock::now();
     std::vector<Pixel> current;
@@ -75,12 +73,11 @@ MeanShiftResult meanShiftOMP(std::vector<uint8_t>& data, int width, float bandwi
             float weight_sum = 0.0f;
 
             for(int j = 0; j < n_pixels; ++j) {
-                float w = kernel(squaredDistanceOMP(src, current[j]), bandwidth_sq);
-                if(w > 0.0f) {
-                    sum_r += w * current[j].r;
-                    sum_g += w * current[j].g;
-                    sum_b += w * current[j].b;
-                    weight_sum += w;
+                if(squaredDistanceOMP(src, current[j]) <= bandwidth_sq) {
+                    sum_r += current[j].r;
+                    sum_g += current[j].g;
+                    sum_b += current[j].b;
+                    weight_sum += 1.0f;
                 }
             }
 

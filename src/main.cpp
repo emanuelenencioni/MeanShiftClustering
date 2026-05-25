@@ -18,14 +18,13 @@
 
 static void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " <image> [bandwidth] [max_iter] [baseline|seq|soa|omp|omp_soa] [--pbar] [--no-display] [--no-output] [--kernel flat|gaussian|epanechnikov]" << std::endl;
+              << " <image> [bandwidth] [max_iter] [baseline|seq|soa|omp|omp_soa] [--pbar] [--no-display] [--no-output]" << std::endl;
     std::cerr << "  bandwidth    : float, default 150" << std::endl;
     std::cerr << "  max_iter     : int,   default 100" << std::endl;
     std::cerr << "  algorithm    : baseline, seq, soa, omp or omp_soa, default seq" << std::endl;
     std::cerr << "  --pbar       : show per-iteration progress bar on stderr" << std::endl;
     std::cerr << "  --no-display : skip OpenCV image display window" << std::endl;
     std::cerr << "  --no-output  : skip writing result PNG and log file" << std::endl;
-    std::cerr << "  --kernel     : kernel function: flat (default), gaussian, epanechnikov" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -44,7 +43,6 @@ int main(int argc, char* argv[]) {
     bool show_pbar = false;
     bool no_display = false;
     bool no_output = false;
-    std::string kernel_name = "flat";
     std::vector<const char*> pos_args;
     pos_args.push_back(argv[0]);
     for(int i = 1; i < argc; ++i) {
@@ -54,8 +52,6 @@ int main(int argc, char* argv[]) {
             no_display = true;
         else if(std::string(argv[i]) == "--no-output")
             no_output = true;
-        else if(std::string(argv[i]) == "--kernel" && i + 1 < argc)
-            kernel_name = argv[++i];
         else
             pos_args.push_back(argv[i]);
     }
@@ -77,8 +73,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    KernelFn kernel = makeKernel(kernel_name);
-
     using clock = std::chrono::steady_clock;
     auto t_total_start = clock::now();
 
@@ -94,8 +88,7 @@ int main(int argc, char* argv[]) {
               << " (" << image.width * image.height << " pixels)" << std::endl;
     std::cout << "Algorithm: " << algorithm
               << "  bandwidth=" << bandwidth
-              << "  max_iter=" << max_iter
-              << "  kernel=" << kernel_name << std::endl;
+              << "  max_iter=" << max_iter << std::endl;
 
     auto t_conv_start = clock::now();
     std::vector<uint8_t> data;
@@ -106,15 +99,15 @@ int main(int argc, char* argv[]) {
     auto t_ms_start = clock::now();
     MeanShiftResult result{};
     if(algorithm == "baseline")
-        result = meanShiftBaseline(image, bandwidth, max_iter, 1e-3f, show_pbar, kernel);
+        result = meanShiftBaseline(image, bandwidth, max_iter, 1e-3f, show_pbar);
     else if(algorithm == "soa")
-        result = meanShiftSoA(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, kernel);
+        result = meanShiftSoA(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     else if(algorithm == "omp")
-        result = meanShiftOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, kernel);
+        result = meanShiftOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     else if(algorithm == "omp_soa")
-        result = meanShiftSoAOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, kernel);
+        result = meanShiftSoAOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     else
-        result = meanShift(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, kernel);
+        result = meanShift(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     auto t_ms_end = clock::now();
 
     auto t_out_start = clock::now();

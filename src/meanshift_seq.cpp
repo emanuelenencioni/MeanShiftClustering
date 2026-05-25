@@ -43,10 +43,8 @@ static void fromPixels(const std::vector<Pixel>& pixels, std::vector<uint8_t>& d
 
 // Brute-force: O(n^2) per iteration, 5D feature space (x, y, R, G, B)
 MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth,
-                          int max_iter, float tol, bool show_pbar, KernelFn kernel) {
+                          int max_iter, float tol, bool show_pbar) {
     using clock = std::chrono::steady_clock;
-
-    if(!kernel) kernel = makeKernel("flat");
 
     auto t_conv_start = clock::now();
     std::vector<Pixel> current;
@@ -75,12 +73,11 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth
             float weight_sum = 0.0f;
 
             for(int j = 0; j < n_pixels; ++j) {
-                float w = kernel(squaredDistance(src, current[j]), bandwidth_sq);
-                if(w > 0.0f) {
-                    sum_r += w * current[j].r;
-                    sum_g += w * current[j].g;
-                    sum_b += w * current[j].b;
-                    weight_sum += w;
+                if(squaredDistance(src, current[j]) <= bandwidth_sq) {
+                    sum_r += current[j].r;
+                    sum_g += current[j].g;
+                    sum_b += current[j].b;
+                    weight_sum += 1.0f;
                 }
             }
 

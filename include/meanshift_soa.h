@@ -35,6 +35,6 @@ float squaredDistanceSoA(const ImageSoA& soa, int i, int j);
 // Mean shift using SoA - brute force O(n^2), 5D feature space (x, y, R, G, B)
 MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwidth,
                              int max_iter = 100, float tol = 1e-3f,
-                             bool show_pbar = false, KernelFn kernel = nullptr);
+                             bool show_pbar = false);
 
 #endif // MEANSHIFT_SOA_H

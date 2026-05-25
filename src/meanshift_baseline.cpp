@@ -32,66 +32,45 @@ void printProgressBar(int iter, int max_iter, float max_change) {
     std::fflush(stderr);
 }
 
-/* --- Kernel functions ---------------------------------------------------- */
-
-static float kernelFlat(float sq_dist, float bw_sq) {
-    return sq_dist <= bw_sq ? 1.0f : 0.0f;
-}
-
-static float kernelGaussian(float sq_dist, float bw_sq) {
-    if(sq_dist > bw_sq) return 0.0f;
-    return std::exp(-sq_dist / (2.0f * bw_sq));
-}
-
-static float kernelEpanechnikov(float sq_dist, float bw_sq) {
-    if(sq_dist > bw_sq) return 0.0f;
-    return 1.0f - sq_dist / bw_sq;
-}
-
-KernelFn makeKernel(const std::string& name) {
-    if(name == "flat")           return kernelFlat;
-    if(name == "gaussian")       return kernelGaussian;
-    if(name == "epanechnikov")   return kernelEpanechnikov;
-    std::cerr << "Unknown kernel: " << name
-              << ". Valid options: flat, gaussian, epanechnikov" << std::endl;
-    std::exit(1);
-}
-
 /* --- Baseline algorithm -------------------------------------------------- */
 
-/* 5D squared distance between pixels i and j using flat stride-3 float buffer.
- * Spatial coords (x, y) are recomputed from the pixel index on every call —
- * this is the deliberate inefficiency that the seq version eliminates. */
-static float squaredDistanceBaseline(const std::vector<float>& buf, int i, int j, int width) {
-    float dx = static_cast<float>(i % width) - static_cast<float>(j % width);
-    float dy = static_cast<float>(i / width) - static_cast<float>(j / width);
-    float dr = buf[i * 3 + 0] - buf[j * 3 + 0];
-    float dg = buf[i * 3 + 1] - buf[j * 3 + 1];
-    float db = buf[i * 3 + 2] - buf[j * 3 + 2];
-    return dx*dx + dy*dy + dr*dr + dg*dg + db*db;
+/* 5D squared distance between pixels i and j using stride-5 float buffer.
+ * Layout per pixel: [r, g, b, x, y]. Flat kernel: returns true if within bandwidth. */
+static inline bool withinBandwidthBaseline(const std::vector<float>& buf,
+                                           int i, int j, float bw_sq) {
+    float dr = buf[i * 5 + 0] - buf[j * 5 + 0];
+    float dg = buf[i * 5 + 1] - buf[j * 5 + 1];
+    float db = buf[i * 5 + 2] - buf[j * 5 + 2];
+    float dx = buf[i * 5 + 3] - buf[j * 5 + 3];
+    float dy = buf[i * 5 + 4] - buf[j * 5 + 4];
+    return dx*dx + dy*dy + dr*dr + dg*dg + db*db <= bw_sq;
 }
 
 /* Naive brute-force mean shift.
  * Operates directly on image.rgb_image (raw uint8_t*, RGB, stride 3).
- * - x, y recomputed via i%width / i/width inside the O(n^2) inner loop.
+ * - x, y precomputed once into the working buffer (stride 5: r,g,b,x,y).
  * - next buffer allocated fresh each iteration (no hoisting).
+ * - Flat kernel: all neighbors within bandwidth contribute equally.
  * - Jacobi update: reads from current[], writes to next[], then swaps.
  * Results written back to image.rgb_image in place. */
 MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
-                                  int max_iter, float tol, bool show_pbar, KernelFn kernel) {
+                                  int max_iter, float tol, bool show_pbar) {
     using clock = std::chrono::steady_clock;
-
-    if(!kernel) kernel = makeKernel("flat");
 
     const int width = image.width;
     const int n_pixels = image.width * image.height;
     uint8_t* raw = image.rgb_image;
 
-    // Load raw uint8_t* into float working buffer
+    // Load raw uint8_t* into stride-5 float working buffer: [r, g, b, x, y]
     auto t_conv_start = clock::now();
-    std::vector<float> current(n_pixels * 3);
-    for(int i = 0; i < n_pixels * 3; ++i)
-        current[i] = static_cast<float>(raw[i]);
+    std::vector<float> current(n_pixels * 5);
+    for(int i = 0; i < n_pixels; ++i) {
+        current[i * 5 + 0] = static_cast<float>(raw[i * 3 + 0]);
+        current[i * 5 + 1] = static_cast<float>(raw[i * 3 + 1]);
+        current[i * 5 + 2] = static_cast<float>(raw[i * 3 + 2]);
+        current[i * 5 + 3] = static_cast<float>(i % width);
+        current[i * 5 + 4] = static_cast<float>(i / width);
+    }
     auto t_conv_end = clock::now();
     double convert_ms = std::chrono::duration<double, std::milli>(t_conv_end - t_conv_start).count();
 
@@ -102,7 +81,7 @@ MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
     std::vector<IterationInfo> iter_details;
 
     for(; iter < max_iter; ++iter) {
-        std::vector<float> next(n_pixels * 3);
+        std::vector<float> next(n_pixels * 5);
         float max_change = 0.0f;
 
         auto t_shift_start = clock::now();
@@ -112,12 +91,11 @@ MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
             float weight_sum = 0.0f;
 
             for(int j = 0; j < n_pixels; ++j) {
-                float w = kernel(squaredDistanceBaseline(current, i, j, width), bandwidth_sq);
-                if(w > 0.0f) {
-                    sum_r += w * current[j * 3 + 0];
-                    sum_g += w * current[j * 3 + 1];
-                    sum_b += w * current[j * 3 + 2];
-                    weight_sum += w;
+                if(withinBandwidthBaseline(current, i, j, bandwidth_sq)) {
+                    sum_r += current[j * 5 + 0];
+                    sum_g += current[j * 5 + 1];
+                    sum_b += current[j * 5 + 2];
+                    weight_sum += 1.0f;
                 }
             }
 
@@ -126,17 +104,20 @@ MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
                 float new_r = sum_r / weight_sum;
                 float new_g = sum_g / weight_sum;
                 float new_b = sum_b / weight_sum;
-                change = std::max({std::abs(new_r - current[i * 3 + 0]),
-                                   std::abs(new_g - current[i * 3 + 1]),
-                                   std::abs(new_b - current[i * 3 + 2])});
-                next[i * 3 + 0] = new_r;
-                next[i * 3 + 1] = new_g;
-                next[i * 3 + 2] = new_b;
+                change = std::max({std::abs(new_r - current[i * 5 + 0]),
+                                   std::abs(new_g - current[i * 5 + 1]),
+                                   std::abs(new_b - current[i * 5 + 2])});
+                next[i * 5 + 0] = new_r;
+                next[i * 5 + 1] = new_g;
+                next[i * 5 + 2] = new_b;
             } else {
-                next[i * 3 + 0] = current[i * 3 + 0];
-                next[i * 3 + 1] = current[i * 3 + 1];
-                next[i * 3 + 2] = current[i * 3 + 2];
+                next[i * 5 + 0] = current[i * 5 + 0];
+                next[i * 5 + 1] = current[i * 5 + 1];
+                next[i * 5 + 2] = current[i * 5 + 2];
             }
+            // carry x, y through unchanged
+            next[i * 5 + 3] = current[i * 5 + 3];
+            next[i * 5 + 4] = current[i * 5 + 4];
 
             if(change > max_change)
                 max_change = change;
@@ -159,14 +140,16 @@ MeanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
     if(show_pbar)
         std::fprintf(stderr, "\n");
 
-    // Write results back to raw uint8_t* buffer
+    // Write results back to raw uint8_t* buffer (only r, g, b channels)
     auto t_conv_out_start = clock::now();
-    for(int i = 0; i < n_pixels * 3; ++i) {
-        float val = std::max(0.0f, std::min(current[i], 255.0f));
-        raw[i] = static_cast<uint8_t>(std::round(val));
+    for(int i = 0; i < n_pixels; ++i) {
+        raw[i * 3 + 0] = static_cast<uint8_t>(std::round(std::max(0.0f, std::min(current[i * 5 + 0], 255.0f))));
+        raw[i * 3 + 1] = static_cast<uint8_t>(std::round(std::max(0.0f, std::min(current[i * 5 + 1], 255.0f))));
+        raw[i * 3 + 2] = static_cast<uint8_t>(std::round(std::max(0.0f, std::min(current[i * 5 + 2], 255.0f))));
     }
     auto t_conv_out_end = clock::now();
     convert_ms += std::chrono::duration<double, std::milli>(t_conv_out_end - t_conv_out_start).count();
 
     return MeanShiftResult{static_cast<int>(iter_details.size()), total_shift_ms, convert_ms, iter_details};
 }
+
