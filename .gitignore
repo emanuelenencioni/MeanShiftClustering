@@ -24,3 +24,17 @@ BSD500
 Images/*.png
 Images/*.log
 *.csv
+Images/*
+# LaTeX compilation output
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.DS_Store
+*.sty
+*.bst
