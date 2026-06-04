@@ -53,7 +53,7 @@ EVENTS_SCALING="cycles,instructions,l1-dcache-loads,l1-dcache-load-misses,cache-
 # Use tiers 1-2 (6.7K and 15K px) — small enough for seq at 1T with perf
 # overhead to stay well under 60 s per run.
 LAYOUT_IMAGES=("Images/bsd_55067_100x67.jpg" "Images/bsd_76002_150x100.jpg")
-LAYOUT_ALGOS=("seq" "soa")
+LAYOUT_ALGOS=("seq" "soa" "baseline")
 LAYOUT_BW=50
 LAYOUT_THREADS=1
 
