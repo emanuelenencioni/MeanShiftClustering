@@ -140,7 +140,7 @@ struct STBImage {
 };
 \end{lstlisting}
 
-\subsection{\textit{seq} implementation}\label{subsec:seq}
+\subsection{\texttt{seq} implementation}\label{subsec:seq}
 In the initial baseline design, the spatial coordinates (x,y) of each pixel were dynamically derived  from the linear index j using the image width (\cref{code:aos_spatial}). While this approach minimizes the memory footprint by avoiding the storage of redundant spatial data, it shifts the primary bottleneck to the CPU's execution units. Integer division (\texttt{/}) and modulo (\texttt{\%}) are among the highest-latency scalar instructions on modern x86 architectures. Performing these operations $N^2$ times per iteration  can causes the inner loop to become heavily \textbf{compute-bound}. To prioritize execution efficiency, in this new implementation,  spatial coordinates are pre-computed and stored within the feature vector(\cref{code:aos_spatial_mem}). This expansion of the 'pixel' data structure effectively trades memory capacity for a significant reduction in clock cycles per iteration, transforming the algorithm into a more efficient memory-bound process. As a result, the initial \texttt{stb\_image} buffer is replaced by a tailored data layout.
 
 Another improvement involved \textbf{memory hoisting}, implemented by moving the auxiliary buffer allocations outside the \textbf{temporal loop}. This can reduces the overhead of the memory manager by avoiding O(iter) system calls and heap allocations. This was maintained across the subsequent implementations described in this section.
@@ -152,7 +152,7 @@ struct Pixel {
 };
 \end{lstlisting}
 
-\subsection{SoA implementation}\label{subsec: SoA}
+\subsection{\texttt{soa} implementation}\label{subsec: SoA}
 In the previously described AoS layout, each pixel is represented by a contiguous block of five floating-point values. Although this ensures locality for individual pixel updates, it introduces a stride-5 access pattern when the algorithm evaluates a specific dimension across the dataset.  This non-contiguous access can be suboptimal as it complicates the "gathering" of data into vector registers.
 
 To mitigate these limitations, the Structure of Arrays (SoA) implementation reorganizes the memory layout by decomposing the feature vectors into five independent contiguous arrays $(V_R,V_G,V_B,V_x,V_y)$, each of size N ( \cref{code:soa_impl_with_neigh_acc}). This architectural shift provides two primary advantages:
@@ -270,9 +270,25 @@ At first, a runtime-selectable kernel was implemented to test each one within th
 %%%
 \subsection{SoA vs seq vs baseline} \label{subsec:soa_seq_base}
 The empirical results corroborate the architectural design choices detailed in \cref{sec:method}. As shown in \cref{fig:aos_soa}, the performance hierarchy remains consistent across all resolution tiers, with the SoA variant providing the most significant reduction in execution latency. The substantial time reduction observed for the SoA variant over the Baseline validates the transition to unit-stride memory access discussed in \cref{subsec: SoA}. While the seq(AoS) version reduces ALU pressure by pre-computing coordinates, the SoA version successfully mitigates the "cache pollution" inherent in interleaved data structures, allowing the hardware to maximize throughput.  Is important to notice the  near-identical performance in varying bandwidth parameters ($h$). This will be explored further in \cref{subsubsec:profiling}.
-Lastly, the absolute gap between baseline and optimized variants (\textit{seq} and \textit{soa}) widens at larger resolutions, a natural consequence of all three sharing the same $\mathcal O(n^2)$ scaling multiplied by different per-pixel constants. This confirms that the overhead of on-the-fly coordinate recomputation (\cref{code:aos_spatial}) dominates the execution time as $N$ grows, while the optimized versions (\cref{subsec:seq} \& \cref{subsec: SoA}) maintain a more favorable scaling curve by shifting the workload to vectorizable floating-point operations. 
+Lastly, the absolute gap between baseline and optimized variants (\texttt{seq} and \texttt{soa}) widens at larger resolutions, a natural consequence of all three sharing the same $\mathcal O(n^2)$ scaling multiplied by different per-pixel constants. This confirms that the overhead of on-the-fly coordinate recomputation (\cref{code:aos_spatial}) dominates the execution time as $N$ grows, while the optimized versions (\cref{subsec:seq} \& \cref{subsec: SoA}) maintain a more favorable scaling curve by shifting the workload to vectorizable floating-point operations. 
 
-\paragraph{speedup} Looking at \cref{fig:seq_speedup}, the speedup of the SoA implementation over the Baseline is approximately 2.8× across all resolution tiers. This flatness is due to the cancellation of the $\mathcal O(n^2)$ term, leaving only the ratio of per-pixel-pair costs $C_{baseline} / C_{v}$, where $v=seq, soa$, and $C$ captures the average time spent evaluating one $(i,j)$ pair: memory loads, distance computation, kernel comparison and conditional accumulation (see Appendix \ref{} for full breakdown). The minimal gain of the \textit{seq} ($\times1.1$) is due to making the coordinate recomputation nearly free. This is a algorithmic (constant) speedup
+\begin{figure*}    
+    \begin{center}
+        \includegraphics[width=1\linewidth]{images/fig_seq_comparison.png}
+        \caption{Structure of Arrays (SoA) exhibits superior cache locality and throughput compared to Array of Structures (AoS) and Baseline, achieving a ~2.8× reduction in execution latency at higher resolutions. The invariance of performance across bandwidth settings (20–100) suggests a compute-bound or cache-latency-bound bottleneck rather than a memory bandwidth limitation. Shaded regions denote $\pm 1$ standard deviation across diverse image sets.}
+        \label{fig:aos_soa}
+    \end{center}
+\end{figure*}
+
+\paragraph{Speedup} Looking at \cref{fig:seq_speedup}, the speedup of the SoA implementation over the Baseline is approximately 2.9× across all resolution tiers. This flatness is due to the cancellation of the $\mathcal O(n^2)$ term, leaving only the ratio of per-pixel-pair costs $C_{baseline} / C_{v}$, where $v=seq, soa$, and $C$ captures the average time spent evaluating one $(i,j)$ pair: memory loads, distance computation, kernel comparison and conditional accumulation (see Appendix \ref{subsec:cost_model} for full breakdown). This can be seen as an algorithmic speedup. The minimal gain of the \texttt{seq} ($\times1.1$) is due to making the coordinate recomputation nearly free. 
+
+\begin{figure}
+    \includegraphics[width=1\linewidth]{images/fig_seq_speedup_vs_baseline.png}
+    \caption{The constant ratio confirms a fixed per-pixel efficiency gain independent of image size.}
+    \label{fig:seq_speedup}
+\end{figure}
+
+
 
 \subsubsection{Some deeper analysis} \label{subsubsec:profiling}
 Let's look deep into the \cref{fig:aos_soa}, what maybe we could expect is the theoretical increase in the spatial search range when $h=100$, but the execution time does not scale linearly with the search volume. The $\mathcal O(N^2)$ 5D distance computation dominates (95-98\% of cycles), and the bandwidth only controls the branch-taken rate of the accumulator (2-5\%) this because the brute force inner loop iterates over all N pixels regardless of bandwidth, computing the full 5D distance. The bottleneck is therefore the quadratic distance computation (flat kernel), confirming the parallelization strategy is correctly targeted. The \texttt{perf} hardware-counter data sheds further light on how each memory
@@ -288,7 +304,7 @@ This behaviour is consistent with the compiler auto-vectorising the SoA inner
 loop using SIMD instructions (AVX2 on the test machine), each of which processes
 multiple pixels simultaneously and therefore counts as a single load and a single
 retired instruction in the hardware counters. The direct consequence is visible in
-\cref{fig:profile_cycles}: \texttt{soa} completes in approximately $3\times$ fewer
+\cref{fig:profile_cycles}: \texttt{soa} completes in approximately $2.9\times$ fewer
 CPU cycles than \texttt{seq}, confirming that the SIMD widening translates
 directly into a proportional reduction in execution time.
 In summary, the per-instruction metrics (IPC, L1 miss rate) are misleading when
@@ -311,40 +327,21 @@ Backend stalls/cycle & 4.98   & 4.71   & \textbf{5.06}   \\
 
 \end{tabular}
 \end{table}
+
+
 \begin{figure}
     \begin{center}
         \includegraphics[width=1\linewidth]{images/fig_profile_cycles.png}
-        \caption{Total CPU cycles consumed by each sequential implementation. The SoA version achieves a ~3× reduction in cycles compared to the seq (AoS) version, confirming that SIMD vectorization effectively translates into proportional performance gains. The cycle count is consistent across bandwidth settings, reinforcing the conclusion that the workload is bound by L1 cache latency and instruction retirement throughput rather than memory bandwidth. Shaded regions denote $\pm 1$ standard deviation across diverse image sets.}
+        \caption{Total CPU cycles consumed by each sequential implementation (per iteration). This is consistent across bandwidth settings, reinforcing the conclusion that the workload is bound by L1 cache latency and instruction retirement throughput rather than memory bandwidth. Shaded regions denote $\pm 1$ standard deviation across diverse image sets.}
         \label{fig:profile_cycles}
     \end{center}
 \end{figure}
-\begin{figure*}    
-    \begin{center}
-        \includegraphics[width=1\linewidth]{images/fig_seq_comparison.png}
-        \caption{Structure of Arrays (SoA) exhibits superior cache locality and throughput compared to Array of Structures (AoS) and Baseline, achieving a ~2.8× reduction in execution latency at higher resolutions. The invariance of performance across bandwidth settings (20–100) suggests a compute-bound or cache-latency-bound bottleneck rather than a memory bandwidth limitation. Shaded regions denote $\pm 1$ standard deviation across diverse image sets.}
-        \label{fig:aos_soa}
-    \end{center}
-\end{figure*}
 
-\begin{figure}
-    \includegraphics[width=1\linewidth]{images/fig_seq_speedup_vs_baseline.png}
-    \label{fig:seq_speedup}
-    \caption{The constant ratio confirms a fixed per-pixel efficiency gain independent of image size.}
-\end{figure}
 \subsection{Parallelization with OpenMP}
 
 
 \subsection{CUDA}
 \section{Conclusion}
-
-\begin{figure*}
-\begin{center}
-\fbox{\rule{0pt}{2in} \rule{.9\linewidth}{0pt}}
-\end{center}
-   \caption{Example of a short caption, which should be centered.}
-\label{fig:short}
-\end{figure*}
-
 
 \begin{figure*}[t]
     \centering
@@ -478,7 +475,7 @@ meanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
 }
 \end{lstlisting}
 
-\subsection{The \textit{seq} algorithm}\label{subsec:seq_code}
+\subsection{The \texttt{seq} algorithm}\label{subsec:seq_code}
 \begin{lstlisting}[language=C++, caption={Sequential Mean Shift function (seq)}]
 MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth,
                           int max_iter, float tol, bool show_pbar, KernelFn kernel) {
@@ -566,7 +563,7 @@ MeanShiftResult meanShift(std::vector<uint8_t>& data, int width, float bandwidth
 
 \end{lstlisting}
 
-\subsection{The \textit{soa} algorithm}\label{subsec:soa_code}
+\subsection{The \texttt{soa} algorithm}\label{subsec:soa_code}
 \begin{lstlisting}[language=C++, caption={SoA brute-force Mean Shift function}]
 MeanShiftResult meanShiftSoA(std::vector<uint8_t>& data, int width, float bandwidth,
                              int max_iter, float tol, bool show_pbar, KernelFn kernel) {
@@ -914,7 +911,7 @@ The execution time of each brute-force variant is modeled as $T = C \times n^2 \
     \item \textbf{ALU operations}, 5D squared distance (14 FLOP) + kernel comparison + conditional accumulation,
     \item \textbf{overhead}, loop control, integer division/modulo (baseline only), pipeline stalls.
 \end{itemize}
-Empirical values derived from benchmarks: $C_{\text{baseline}} \approx X$, $C_{\text{seq}} \approx Y$, $C_{\text{soa}} \approx Z$ (where $X/Y/Z$ are in ns or cycles per pixel-pair). The ratio $C_{\text{baseline}} / C_{\text{soa}} \approx 3$ confirms that SoA's SIMD vectorization processes multiple pixels per instruction, while the constant speedup across resolutions follows from the $n^2$ cancellation — the same analysis referenced in \cref{subsubsec:profiling}.
+Empirical values derived from benchmarks: $C_{\text{baseline}} \approx 1.98$, $C_{\text{seq}} \approx 1.75$, $C_{\text{soa}} \approx 0.68$ (where $X/Y/Z$ are in ns or cycles per pixel-pair). The ratio $C_{\text{baseline}} / C_{\text{soa}} \approx 2.93$ confirms that SoA's SIMD vectorization processes multiple pixels per instruction, while the constant speedup across resolutions follows from the $n^2$ cancellation — the same analysis referenced in \cref{subsubsec:profiling}.
 \end{document}
 
 
