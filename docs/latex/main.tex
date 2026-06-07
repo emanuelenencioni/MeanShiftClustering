@@ -274,10 +274,9 @@ Lastly, the "Baseline" implementation shows a growing latency increase at higher
 
 
 \subsubsection{Some deeper analysis} \label{subsubsec:profiling}
-Something strange happened in the data, cause looking at \cref{tab:performance_comparison}, the results are counter-intuitive. the SoA implementation result with an Higher L1 miss rate and lower IPC than AoS and baseline too. But if we actually go and watch the raw data, we can clearly see that the Absolute L1 miss count is Identical to all 3 implementations. The rate is actually missleading cause the SoA implementation reduce instructions, load operations and cycles by 3x. So the miss rate ( misses / loads) goes up. This is a confirm that the SIMD instructions are actually used and are benificial in the SoA implementation.
-
-As shown in \cref{tab:performance_comparison}, the per-instruction metrics produce a counter-intuitive picture: the \texttt{soa}implementation exhibits a higher L1\,D-cache miss rate and a lower IPC than both \texttt{seq} and \texttt{baseline}. Taken in isolation, these figures would suggest that the SoA memory layout is \emph{detrimental} to cache behavior. However, inspecting the raw counter values reveals that this interpretation is incorrect. As \cref{fig:profile_l1_miss_count} shows, the \emph{absolute} number
-of L1\,D-cache misses is virtually identical across all three implementations $\approx 294\,\text{M}$). The elevated miss \emph{rate} is therefore an arithmetic artifact rather than a sign of additional cache pressure. The root cause is visible in \cref{fig:profile_l1_loads,fig:profile_instructions}:
+Let's look deep into the \cref{fig:aos_soa}, what maybe we could expect is the theoretical increase in the spatial search range when $h=100$, but the execution time does not scale linearly with the search volume. The $\mathcal O(N^2)$ 5D distance computation dominates (95-98\% of cycles), and the bandwidth only controls the branch-taken rate of the accumulator (2-5\%) this becouse the brute force inner loop iterates over all N pixels regardless of bandwidth, computing the full 5D distance. The bottleneck is therefore the quadratic distance computation (flat kernel), confirming the parallelization strategy is correctly targeted. The \texttt{perf} hardware-counter data sheds further light on how each memory
+layout achieves its throughput at the microarchitectural level.
+As shown in \cref{tab:performance_comparison}, the per-instruction metrics produce a counter-intuitive picture: the \texttt{soa}implementation exhibits a higher L1\,D-cache miss rate and a lower IPC than both \texttt{seq} and \texttt{baseline}. Taken in isolation, these figures would suggest that the SoA memory layout is \emph{detrimental} to cache behavior. However, inspecting the raw counter values reveals that this interpretation is incorrect. As \cref{fig:profile_l1_miss_count} shows, the \emph{absolute} number of L1\,D-cache misses is virtually identical across all three implementations $\approx 294\,\text{M}$). The elevated miss \emph{rate} is therefore an arithmetic artifact rather than a sign of additional cache pressure. The root cause is visible in \cref{fig:profile_l1_loads,fig:profile_instructions}:
 the \texttt{soa} implementation issues approximately $3\times$ fewer load operations
 and retires $3\times$ fewer instructions than \texttt{seq}. Since the L1 miss rate
 is defined as $\text{misses} / \text{loads}$, a threefold reduction in the
@@ -295,7 +294,7 @@ In summary, the per-instruction metrics (IPC, L1 miss rate) are misleading when
 SIMD is involved, because their denominators collapse with instruction count. The
 correct metrics to compare implementations under vectorisation are the
 \emph{absolute} counters --- total cycles, total instructions, and total stall
-slots --- all of which show \texttt{soa} as the clear winner.
+slots --- all of which show \texttt{soa} as the clear winner. The cycle-level data confirms that this workload is bound by L1 cache hit latency and instruction retirement throughput rather than main-memory bandwidth — consistent with the bandwidth invariance analysis above.
 \begin{table}[htbp]
 \centering
 \caption{Sequential implementations profiling comparison}
@@ -308,17 +307,21 @@ IPC                  & 2.80   & \textbf{3.03}   & 2.36   \\
 L1 miss rate         & 9.0\%  & 12.2\% & \textbf{30.8\%} \\
 LLC miss rate        & 0.48\% & \textbf{0.50\%} & 0.46\% \\
 Backend stalls/cycle & 4.98   & 4.71   & \textbf{5.06}   \\
-\bottomrule
+
 \end{tabular}
 \end{table}
-
+\begin{figure}
+    \begin{center}
+        \includegraphics[width=1\linewidth]{images/fig_profile_cycles.png}
+        \caption{Total CPU cycles consumed by each sequential implementation. The SoA version achieves a ~3× reduction in cycles compared to the seq (AoS) version, confirming that SIMD vectorization effectively translates into proportional performance gains. The cycle count is consistent across bandwidth settings, reinforcing the conclusion that the workload is bound by L1 cache latency and instruction retirement throughput rather than memory bandwidth. Shaded regions denote $\pm 1$ standard deviation across diverse image sets.}
+        \label{fig:profile_cycles}
+    \end{center}
+\end{figure}
 \begin{figure*}    
-\begin{center}
-    \includegraphics[width=1\linewidth]{images/fig_seq_comparison.png}
-  
-  \caption{Structure of Arrays (SoA) exhibits superior cache locality and throughput compared to Array of Structures (AoS) and Baseline, achieving a ~2.8× reduction in execution latency at higher resolutions. The invariance of performance across bandwidth settings (20–100) suggests a compute-bound or cache-latency-bound bottleneck rather than a memory bandwidth limitation. Shaded regions denote $\pm 1$ standard deviation across diverse image sets.}
-    \label{fig:aos_soa}
-
+    \begin{center}
+        \includegraphics[width=1\linewidth]{images/fig_seq_comparison.png}
+        \caption{Structure of Arrays (SoA) exhibits superior cache locality and throughput compared to Array of Structures (AoS) and Baseline, achieving a ~2.8× reduction in execution latency at higher resolutions. The invariance of performance across bandwidth settings (20–100) suggests a compute-bound or cache-latency-bound bottleneck rather than a memory bandwidth limitation. Shaded regions denote $\pm 1$ standard deviation across diverse image sets.}
+        \label{fig:aos_soa}
     \end{center}
 \end{figure*}
 \subsection{Parallelization with OpenMP}
