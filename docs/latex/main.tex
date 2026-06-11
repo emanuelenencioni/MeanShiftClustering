@@ -163,10 +163,10 @@ To mitigate these limitations, the Structure of Arrays (SoA) implementation reor
 The transition from the interleaved \texttt{stb\_image} format to this SoA representation is handled during the initialization phase. 
 
 \subsection{\textit{omp} implementation}
-In this other implementation an attempt to parallelize the seq implementation was made trying to achieve even more performance boost. The analysis started from the identification of the optimal level of parallelism on each loop: the \textbf{temporal loop}, the external one, isnt paralelizable due to temporal dependencies (the new iteration depend on the previous one), the \textbf{neighbor loop} (innermost) would trigger a "fork-join" operation, for example, given an image with a standard resolution, this would results in hundreds of thousands of thread synchronization per second, leading to massive overhead that would dwarf the actual computation. The \textbf{Spatial loop} is the answer, Each thread is assigned to a contiguous block of pixels to process independently.
+In this other implementation an attempt to parallelize the seq implementation was made trying to achieve even more performance boost. The analysis started from the identification of the optimal level of parallelism on each loop: the \textbf{temporal loop}, the external one, is not parallelizable due to temporal dependencies (the new iteration depend on the previous one), the \textbf{neighbor loop} (innermost) would trigger a "fork-join" operation, for example, given an image with a standard resolution, this would results in hundreds of thousands of thread synchronization per second, leading to massive overhead that would dwarf the actual computation. The \textbf{Spatial loop} is the answer, Each thread is assigned to a contiguous block of pixels to process independently.
 
 \subsubsection{Reduction and thread safety}
-The algorithm must track the maximum shift magnitude across all pixels in order to determine convergence. In the sequential environment this is straightforward (\lstinline[language=C++]{if(change > max_change) max_change = change;}) but in a parallel environment there are multiple threads attempting to update `max\_change` generating a \textbf{race condition}. To resolve this, the implementation uses the OpenMP \textbf{reduction} clause (\cref{code:omp_focus_loop}).  This allows each thread to maintain a locale and private maximum within its own registers or L1 cache. Only upon termination of the parallel region, OpenMP performs a single thread-safe comparison of these local values (typically via a tree-based reduction) to update the global variable. 
+The algorithm must track the maximum shift magnitude across all pixels in order to determine convergence. In the sequential environment this is straightforward (\lstinline[language=C++]{if(change > max_change) max_change = change;}) but in a parallel environment there are multiple threads attempting to update `max\_change` generating a \textbf{race condition}. To resolve this, the implementation uses the OpenMP \textbf{reduction} clause (\cref{code:omp_focus_loop}).  This allows each thread to maintain a local and private maximum within its own registers or L1 cache. Only upon termination of the parallel region, OpenMP performs a single thread-safe comparison of these local values (typically via a tree-based reduction) to update the global variable. 
 
 \begin{lstlisting}[language=C++, caption={Parallel decomposition of the spatial loop utilizing OpenMP max-reduction for thread-safe convergence tracking.}, label={code:omp_focus_loop}]
 #pragma omp parallel for reduction(max: max_change)
@@ -181,8 +181,8 @@ While memory hoisting was introduced in the seq implementation, it becomes funda
 
 The use of separate "current" and "next"(\cref{code:mem_omp}) buffers enforces \textbf{Jacobi semantics}, which provides the mathematical foundation for thread safety. This also allows the \textbf{spatial loop} to strictly adhere to \textbf{Bersnstein's conditions} for parallel executions:
 \begin{itemize}
-    \item \textbf{flow and anti-dependence} are avoided by ensuring that threads only read from the \textit{current} and only write on the \textit{next} buffers,
-    \item \textbf{output dependence} is deleted since each thread is assigned a unique pixel index $i$ in the output array, removing the risk of multiple threads attempt to write to the same memory address.
+    \item \textbf{flow and anti-dependence} (RAW, WAR) are avoided by ensuring that threads only read from the \textit{current} and only write on the \textit{next} buffers,
+    \item \textbf{output dependence} (WAW) is deleted since each thread is assigned a unique pixel index $i$ in the output array, removing the risk of multiple threads attempt to write to the same memory address.
 \end{itemize}
  Consequently, the algorithm removes \textbf{READ-AFTER-WRITE (RAW)} hazards without the need for costly synchronization primitives, such as \textit{atomic} or \textit{critical} sections. This  ensures that the parallel version of the means shift algorithm \cite{first_mean_shift} is bit-wise identical to the sequential version.
 
@@ -207,7 +207,7 @@ for(; iter < max_iter; ++iter) {
 The final refinement of the algorithm integrates the Structure of Arrays (SoA) memory layout with OpenMP multithreading. This version represents the most optimized form of the Mean Shift implementation, as it addresses both computational throughput and memory bandwidth efficiency.
 
 \subsubsection{Data locality and thread efficiency}
-In the standard OpenMP implementation using a Point-of-Pixels (AoS) layout, each thread must load interleaved R, G, and B values into registers. By switching to SoA, each thread now accesses contiguous blocks of memory for each color channel. This enables significantly improves the cache hit rate during the parallel spatial loop.
+In the standard OpenMP implementation using an AoS layout, each thread must load interleaved R, G, and B values into registers. By switching to SoA, each thread now accesses contiguous blocks of memory for each color channel. This enables significantly improves the cache hit rate during the parallel spatial loop.
 
 The spatial locality is maximized due to the separation of the feature space components into large, independent arrays. This reduces memory bandwidth bottlenecks and keeps the execution units saturated.
 
@@ -337,11 +337,6 @@ Backend stalls/cycle & 4.98   & 4.71   & \textbf{5.06}   \\
     \end{center}
 \end{figure}
 
-\subsection{Parallelization with OpenMP}
-
-
-\subsection{CUDA}
-\section{Conclusion}
 
 \begin{figure*}[t]
     \centering
@@ -373,6 +368,48 @@ Backend stalls/cycle & 4.98   & 4.71   & \textbf{5.06}   \\
     \caption{Comprehensive profile metrics including L1 cache misses, total loads, and instruction counts.}
     \label{fig:profile_combined}
 \end{figure*}
+
+
+\subsection{Parallelization with OpenMP}
+Unlike the sequential optimizations, where the speedup was a constant factor independent of problem size, the parallel speedup introduces dependencies on both image resolution and bandwidth (\cref{fig:speedup_by_image}). Larger images achieve higher parallel efficiency, as the $\mathcal O(n^2)$ workload amortizes the fixed serial overhead of thread synchronization and reduction. The bandwidth, negligible in the sequential analysis, now has a measurable effect — particularly in the SoA-based parallel variant. This section examines each factor in turn, then discusses the scaling behavior with simultaneous multithreading.
+\paragraph{Resolution effect}
+Speedup improves with image size -larger n means the $\mathcal O(n^2)$ parallel work grows while serial overhead (barrier, reduction and swap) stays constant per iteration. At the smaller tier, the serial fraction is mesurable; at the largest it's negligible, and speedup approches the number of physical cores ($\approx 11\times$ at 12 threads).
+
+\paragraph{Bandwidth effect}
+\begin{table}
+\centering
+\caption{Execution time (shift\_ms) at 1 thread across bandwidth.}
+\label{tab:bw_dependency}
+\begin{tabular}{l r r}
+\toprule
+Bandwidth & \texttt{omp} (AoS) & \texttt{omp\_soa} (SoA) \\
+\midrule
+20     & 41.6 & 33.5 \\
+100    & 41.6 & 42.7 \\
+200    & 41.5 & 52.4 \\
+500    & 41.5 & 53.6 \\
+1000   & 41.5 & 53.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+For \texttt{omp}, bandwidth has no measurable effect . speedup is $\approx 11\times$ regardless of bandwidth (\cref{tab:bw_dependency}). Same as sequential. For \texttt{omp\_soa}, the store is more nuanced: the absolute time at 1 thread varies with bandwidth ($\approx 33$ s at bw=20 vs $54$ s at bw=1000), but the speedup ration remains similar. This suggest the bandwidth affetcs the per-pixel-pair constant C in the SoA layout but not the parallel efficiency itself.
+\paragraph{SMT}
+Marginal gain from 12 to 24 threads ($\approx 11\times$ to $\approx 11.5\times$) confirms the workload is compute-bound on physical cores; hyperthreading only helps hide remaining pipeline stalls rather than adding throughput.
+
+
+More deeper analysis were performed inside the \cref{subsec:deeper_parallel}.
+\begin{figure*}
+    \begin{center}
+        \centering
+        \includegraphics[width=\linewidth]{images/fig_speedup_by_image.png}
+        \caption{The near-linear scaling at 12 cores ($\approx 11\times$) confirms efficient parallelization, while SMT (24 threads) provides marginal additional benefit ($\approx 11.5\times$).}
+        \label{fig:speedup_by_image}
+    \end{center}
+\end{figure*}
+
+\subsection{CUDA}
+
+\section{Conclusion}
 
 
 
