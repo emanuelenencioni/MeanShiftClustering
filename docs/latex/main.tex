@@ -184,7 +184,7 @@ The use of separate "current" and "next"(\cref{code:mem_omp}) buffers enforces \
     \item \textbf{flow and anti-dependence} (RAW, WAR) are avoided by ensuring that threads only read from the \textit{current} and only write on the \textit{next} buffers,
     \item \textbf{output dependence} (WAW) is deleted since each thread is assigned a unique pixel index $i$ in the output array, removing the risk of multiple threads attempt to write to the same memory address.
 \end{itemize}
- Consequently, the algorithm removes \textbf{READ-AFTER-WRITE (RAW)} hazards without the need for costly synchronization primitives, such as \textit{atomic} or \textit{critical} sections. This  ensures that the parallel version of the means shift algorithm \cite{first_mean_shift} is bit-wise identical to the sequential version.
+Consequently, the algorithm removes \textbf{READ-AFTER-WRITE (RAW)} hazards without the need for costly synchronization primitives, such as \textit{atomic} or \textit{critical} sections. This  ensures that the parallel version of the means shift algorithm \cite{first_mean_shift} is bit-wise identical to the sequential version.
 
 
 \begin{lstlisting}[language=C++, caption={Structural implementation of buffer hoisting and Jacobi double-buffering.},label={code:mem_omp}, basicstyle=\small\ttfamily]
@@ -394,10 +394,8 @@ Bandwidth & \texttt{omp} (AoS) & \texttt{omp\_soa} (SoA) \\
 \end{table}
 For \texttt{omp}, bandwidth has no measurable effect . speedup is $\approx 11\times$ regardless of bandwidth (\cref{tab:bw_dependency}). Same as sequential. For \texttt{omp\_soa}, the store is more nuanced: the absolute time at 1 thread varies with bandwidth ($\approx 33$ s at bw=20 vs $54$ s at bw=1000), but the speedup ration remains similar. This suggest the bandwidth affetcs the per-pixel-pair constant C in the SoA layout but not the parallel efficiency itself.
 \paragraph{SMT}
-Marginal gain from 12 to 24 threads ($\approx 11\times$ to $\approx 11.5\times$) confirms the workload is compute-bound on physical cores; hyperthreading only helps hide remaining pipeline stalls rather than adding throughput.
+Marginal gain from 12 to 24 threads ($\approx 11\times$ to $\approx 11.5\times$) confirms the workload is compute-bound on physical cores; hyperthreading only helps hide remaining pipeline stalls rather than adding throughput (see \S\cref{subsec:scaling_profiling} for the full hardware analysis).
 
-
-More deeper analysis were performed inside the \cref{subsec:deeper_parallel}.
 \begin{figure*}
     \begin{center}
         \centering
@@ -406,6 +404,27 @@ More deeper analysis were performed inside the \cref{subsec:deeper_parallel}.
         \label{fig:speedup_by_image}
     \end{center}
 \end{figure*}
+
+\begin{table}[htbp]
+\centering
+\caption{The SoA layout wins at small bandwidth but
+         loses at large bandwidth, where the $\sim$14\%(\cref{fig:scaling_instructions}) instruction-count
+         overhead dominates.}
+\label{tab:omp_comparison}
+\begin{tabular}{l r r l}
+\toprule
+Scenario & \texttt{omp} & \texttt{omp\_soa} & Faster \\
+\midrule
+1T, bw=20   & 41.6 s & \textbf{33.5} s & \texttt{omp\_soa} \\
+1T, bw=1000 & \textbf{41.5} s & 53.7 s & \texttt{omp} \\
+12T, bw=20  & 3.75 s & \textbf{3.27} s & \texttt{omp\_soa} \\
+12T, bw=1000 & \textbf{3.74} s & 5.14 s & \texttt{omp} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As shown in Table~\ref{tab:omp_comparison}, the SoA SIMD advantage only pays off at small bandwidths. At large bandwidths, the extra instruction count and memory stream overhead dominate, making \texttt{omp} faster despite its better IPC and cache behavior. Overall, the parallelization achieves near-linear speedup ($\sim$11$\times$ at 12 cores), confirming the workload is embarrassingly parallel, while the choice of memory layout interacts with bandwidth in ways that do not affect parallel efficiency.
+
 
 \subsection{CUDA}
 
@@ -949,6 +968,74 @@ The execution time of each brute-force variant is modeled as $T = C \times n^2 \
     \item \textbf{overhead}, loop control, integer division/modulo (baseline only), pipeline stalls.
 \end{itemize}
 Empirical values derived from benchmarks: $C_{\text{baseline}} \approx 1.98$, $C_{\text{seq}} \approx 1.75$, $C_{\text{soa}} \approx 0.68$ (where $X/Y/Z$ are in ns or cycles per pixel-pair). The ratio $C_{\text{baseline}} / C_{\text{soa}} \approx 2.93$ confirms that SoA's SIMD vectorization processes multiple pixels per instruction, while the constant speedup across resolutions follows from the $n^2$ cancellation — the same analysis referenced in \cref{subsubsec:profiling}.
+
+\subsection{Scaling profiling}\label{subsec:scaling_profiling}
+Profiling was conducted via \texttt{perf stat} on two images (add res here) for both \texttt{omp} and \texttt{omp\_soa} at thread count 1,2,4,8,12 and 24, with 3 runs per configuration. Measured events included cycles, instructions, L1 data cache loads and misses, and backend stalls.
+
+Profiling confirms three findings. First, OpenMP adds zero instruction overhead (\cref{fig:scaling_instructions}) — the count is identical at every thread count. The SoA variant executes approximately 14\% more instructions than AoS ($229 \times 10^9$ vs $201 \times 10^9$), a fixed tax for managing five separate memory streams, but compensates with higher IPC (4.1 vs 2.9). Second, the SoA cache advantage persists across all thread counts (\cref{fig:scaling_l1}): L1 miss rate is 1.7\% vs 12.6\% for AoS, with only mild degradation at 24T (1.85\%). The absolute L1 miss count is virtually identical for both, confirming the sequential analysis in \S\ref{subsubsec:profiling}: the rate difference is a SIMD artifact. Third, backend stalls/cycle (\cref{fig:scaling_stalls}) are consistently lower for SoA ($\sim$3.5 vs $\sim$5.1), and CPU cycles (\cref{fig:scaling_cycles}) are flat up to 12 physical cores but approximately double at 24 threads under SMT. The $\sim$45\% IPC drop at 24T is identical for both layouts, indicating a hardware-level SMT bottleneck rather than anything layout-dependent.
+In summary, the profiling data confirms that OpenMP parallelization introduces zero instruction overhead, that the SoA advantage (higher IPC, lower L1 miss rate, fewer backend stalls) persists across all thread counts, and that the only significant performance degradation occurs under SMT (24 threads), where hardware resource contention affects both layouts equally. 
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{images/fig_scaling_instructions.png}
+    \caption{Total instructions per iteration for \texttt{omp} and \texttt{omp\_soa}
+             across thread counts. The count is flat across all threads (OpenMP
+             adds zero overhead); SoA executes $\sim$14\% more instructions
+             due to its five-stream memory layout.}
+    \label{fig:scaling_instructions}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{images/fig_scaling_l1_miss_rate.png}
+    \caption{L1 data cache miss rate across thread counts. The SoA layout
+             maintains $\sim$1.7\% vs $\sim$12.6\% for AoS at all thread
+             counts, confirming the cache advantage is thread-count independent.
+             Mild degradation at 24T (1.85\%) suggests SMT cache-line bouncing.}
+    \label{fig:scaling_l1}
+\end{figure}
+
+
+\begin{figure}[htbp]
+         \centering
+         \includegraphics[width=\columnwidth]{images/fig_scaling_cycles.png}
+         \caption{Total CPU cycles per iteration. Cycles are flat up to 12 physical
+                  cores (zero parallel overhead), then approximately double at 24
+                  threads under SMT contention. The jump is similar for both
+                  variants, confirming a hardware-level effect.}
+         \label{fig:scaling_cycles}
+     \end{figure}
+
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{images/fig_scaling_backend_stalls_total.png}
+    \caption{Backend stalls per cycle. SoA maintains consistently lower stall
+             rates ($\sim$3.5 vs $\sim$5.1), indicating the SIMD-vectorized
+             inner loop keeps the execution pipeline better fed. The drop at
+             24T is a consequence of the IPC collapse (fewer instructions
+             dispatched, fewer stalls accumulated).}
+    \label{fig:scaling_stalls}
+\end{figure}
+
+\begin{table*}[htbp]
+\centering
+\caption{Hardware counter summary for parallel variants (averaged across thread
+         counts 1--12 physical cores; 24T shown separately for SMT comparison).}
+\label{tab:scaling_perf}
+
+\begin{tabular}{l c c c}
+\toprule
+Metric & \texttt{omp} (1--12T) & \texttt{omp\_soa} (1--12T) & \texttt{omp\_soa} (24T) \\
+\midrule
+IPC                & $\sim$2.9  & $\sim$4.1  & $\sim$2.2  \\
+L1 miss rate       & 12.6\%     & 1.7\%      & 1.85\% \\
+Backend stalls/cyc & 5.07       & 3.46       & 2.11  \\
+Instructions (norm)& 1.000      & 1.000      & 1.001 \\
+Cycles (norm)      & 1.00       & 1.02       & 1.92  \\
+\bottomrule
+\end{tabular}
+\end{table*}
 \end{document}
 
 
