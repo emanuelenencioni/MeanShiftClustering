@@ -1,7 +1,7 @@
-project(mean_shift_seq)
+project(mean_shift_seq LANGUAGES CXX)
 cmake_minimum_required(VERSION 3.10)
 
-set(CMAKE_CXX_STANDARD 17) # Adjust the C++ standard version as needed
+set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
@@ -14,6 +14,7 @@ if(OPENMP_FOUND)
 else()
     message(WARNING "OpenMP not found. Compiling without OpenMP support.")
 endif()
+
 add_executable(${PROJECT_NAME}
 src/main.cpp
 src/STBImage.cpp
