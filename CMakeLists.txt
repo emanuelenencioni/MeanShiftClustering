@@ -1,7 +1,11 @@
-project(mean_shift_seq LANGUAGES CXX)
+project(mean_shift_seq LANGUAGES CXX CUDA)
 cmake_minimum_required(VERSION 3.10)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_ARCHITECTURES "61")
+set(CMAKE_CUDA_HOST_COMPILER "/usr/bin/g++-14")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
 
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
@@ -23,6 +27,8 @@ src/meanshift_seq.cpp
 src/meanshift_soa.cpp
 src/meanshift_omp.cpp
 src/meanshift_omp_soa.cpp
+src/meanshift_cuda.cu
+src/meanshift_cuda_2d.cu
 )
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_include_directories(${PROJECT_NAME} PRIVATE include )

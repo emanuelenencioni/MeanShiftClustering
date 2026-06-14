@@ -1,4 +1,4 @@
-#include "meanshift_cuda.h"
+#include "meanshift_cuda_2d.h"
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cstring>
@@ -16,26 +16,38 @@
         }                                                                       \
     } while(0)
 
-__global__ void meanShiftKernel(
+static void decomposeBlockSize(int block_size, int& tx, int& ty) {
+    switch(block_size) {
+        case 128: tx = 16; ty = 8;  break;
+        case 256: tx = 16; ty = 16; break;
+        case 512: tx = 32; ty = 16; break;
+        default:  tx = 16; ty = 16; break;
+    }
+}
+
+__global__ void meanShiftKernel2D(
     const float* __restrict__ r_in, const float* __restrict__ g_in,
     const float* __restrict__ b_in, const float* __restrict__ x_in,
     const float* __restrict__ y_in,
     float* r_out, float* g_out, float* b_out,
-    int n, float bw_sq, unsigned int* d_max_change_bits)
+    int width, int height, float bw_sq, unsigned int* d_max_change_bits)
 {
     extern __shared__ float sh[];
     float* sh_r = sh;
-    float* sh_g = sh +     blockDim.x;
-    float* sh_b = sh + 2 * blockDim.x;
-    float* sh_x = sh + 3 * blockDim.x;
-    float* sh_y = sh + 4 * blockDim.x;
+    float* sh_g = sh +     blockDim.x * blockDim.y;
+    float* sh_b = sh + 2 * blockDim.x * blockDim.y;
+    float* sh_x = sh + 3 * blockDim.x * blockDim.y;
+    float* sh_y = sh + 4 * blockDim.x * blockDim.y;
 
-    const int i  = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    const int tx = static_cast<int>(threadIdx.x);
-    const int bs = static_cast<int>(blockDim.x);
+    const int ix = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int iy = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+    const int i  = iy * width + ix;
+    const int tid = static_cast<int>(threadIdx.y * blockDim.x + threadIdx.x);
+    const int bs  = static_cast<int>(blockDim.x * blockDim.y);
+    const int n   = width * height;
 
     float src_r = 0.f, src_g = 0.f, src_b = 0.f, src_x = 0.f, src_y = 0.f;
-    const bool active = (i < n);
+    const bool active = (ix < width && iy < height);
     if(active) {
         src_r = r_in[i]; src_g = g_in[i]; src_b = b_in[i];
         src_x = x_in[i]; src_y = y_in[i];
@@ -45,13 +57,13 @@ __global__ void meanShiftKernel(
     int count = 0;
 
     for(int tile_start = 0; tile_start < n; tile_start += bs) {
-        int load_j = tile_start + tx;
+        int load_j = tile_start + tid;
         if(load_j < n) {
-            sh_r[tx] = r_in[load_j];
-            sh_g[tx] = g_in[load_j];
-            sh_b[tx] = b_in[load_j];
-            sh_x[tx] = x_in[load_j];
-            sh_y[tx] = y_in[load_j];
+            sh_r[tid] = r_in[load_j];
+            sh_g[tid] = g_in[load_j];
+            sh_b[tid] = b_in[load_j];
+            sh_x[tid] = x_in[load_j];
+            sh_y[tid] = y_in[load_j];
         }
         __syncthreads();
 
@@ -92,18 +104,22 @@ __global__ void meanShiftKernel(
     }
 }
 
-MeanShiftResult meanShiftCUDA(std::vector<uint8_t>& data, int width, float bandwidth,
-                               int max_iter, float tol,
-                               bool show_pbar, int block_size)
+MeanShiftResult meanShiftCUDA2D(std::vector<uint8_t>& data, int width, float bandwidth,
+                                 int max_iter, float tol,
+                                 bool show_pbar, int block_size)
 {
     using clock = std::chrono::steady_clock;
 
     if(block_size != 128 && block_size != 256 && block_size != 512)
         block_size = 256;
 
-    const int    n     = static_cast<int>(data.size() / 3);
-    const float  bw_sq = bandwidth * bandwidth;
-    const size_t bytes = static_cast<size_t>(n) * sizeof(float);
+    int tx, ty;
+    decomposeBlockSize(block_size, tx, ty);
+
+    const int    n      = static_cast<int>(data.size() / 3);
+    const int    height = n / width;
+    const float  bw_sq  = bandwidth * bandwidth;
+    const size_t bytes  = static_cast<size_t>(n) * sizeof(float);
 
     auto t_conv_start = clock::now();
     std::vector<float> h_r(n), h_g(n), h_b(n), h_x(n), h_y(n);
@@ -151,17 +167,18 @@ MeanShiftResult meanShiftCUDA(std::vector<uint8_t>& data, int width, float bandw
     CUDA_CHECK(cudaEventCreate(&ev_start));
     CUDA_CHECK(cudaEventCreate(&ev_stop));
 
-    int grid = (n + block_size - 1) / block_size;
+    dim3 block(tx, ty);
+    dim3 grid((width + tx - 1) / tx, (height + ty - 1) / ty);
     size_t smem = 5 * static_cast<size_t>(block_size) * sizeof(float);
 
     for(; iter < max_iter; ++iter) {
         CUDA_CHECK(cudaMemset(d_max_change_bits, 0, sizeof(unsigned int)));
 
         CUDA_CHECK(cudaEventRecord(ev_start));
-        meanShiftKernel<<<grid, block_size, smem>>>(
+        meanShiftKernel2D<<<grid, block, smem>>>(
             r_in, g_in, b_in, d_x, d_y,
             r_out, g_out, b_out,
-            n, bw_sq, d_max_change_bits);
+            width, height, bw_sq, d_max_change_bits);
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaEventRecord(ev_stop));
         CUDA_CHECK(cudaEventSynchronize(ev_stop));

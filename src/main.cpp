@@ -15,16 +15,19 @@
 #include "meanshift_baseline.h"
 #include "meanshift_omp.h"
 #include "meanshift_omp_soa.h"
+#include "meanshift_cuda.h"
+#include "meanshift_cuda_2d.h"
 
 static void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " <image> [bandwidth] [max_iter] [baseline|seq|soa|omp|omp_soa] [--pbar] [--no-display] [--no-output]" << std::endl;
+              << " <image> [bandwidth] [max_iter] [baseline|seq|soa|omp|omp_soa|cuda|cuda_2d] [--pbar] [--no-display] [--no-output]" << std::endl;
     std::cerr << "  bandwidth    : float, default 150" << std::endl;
     std::cerr << "  max_iter     : int,   default 100" << std::endl;
-    std::cerr << "  algorithm    : baseline, seq, soa, omp or omp_soa, default seq" << std::endl;
+    std::cerr << "  algorithm    : baseline, seq, soa, omp, omp_soa, cuda or cuda_2d, default seq" << std::endl;
     std::cerr << "  --pbar       : show per-iteration progress bar on stderr" << std::endl;
     std::cerr << "  --no-display : skip OpenCV image display window" << std::endl;
     std::cerr << "  --no-output  : skip writing result PNG and log file" << std::endl;
+    std::cerr << "  --block-size <N> : CUDA block size (128, 256, 512, default 256)" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -43,6 +46,7 @@ int main(int argc, char* argv[]) {
     bool show_pbar = false;
     bool no_display = false;
     bool no_output = false;
+    int block_size = 256;
     std::vector<const char*> pos_args;
     pos_args.push_back(argv[0]);
     for(int i = 1; i < argc; ++i) {
@@ -52,7 +56,14 @@ int main(int argc, char* argv[]) {
             no_display = true;
         else if(std::string(argv[i]) == "--no-output")
             no_output = true;
-        else
+        else if(std::string(argv[i]) == "--block-size") {
+            if(i + 1 < argc) {
+                block_size = std::stoi(argv[++i]);
+            } else {
+                std::cerr << "Error: --block-size requires a value (128, 256, or 512)" << std::endl;
+                return 1;
+            }
+        } else
             pos_args.push_back(argv[i]);
     }
     const int pos_argc = static_cast<int>(pos_args.size());
@@ -67,7 +78,8 @@ int main(int argc, char* argv[]) {
     if(pos_argc >= 5) algorithm = pos_args[4];
 
     if(algorithm != "baseline" && algorithm != "seq" && algorithm != "soa" &&
-       algorithm != "omp" && algorithm != "omp_soa") {
+       algorithm != "omp" && algorithm != "omp_soa" && algorithm != "cuda" &&
+       algorithm != "cuda_2d") {
         std::cerr << "Unknown algorithm: " << algorithm << std::endl;
         printUsage(argv[0]);
         return 1;
@@ -106,6 +118,10 @@ int main(int argc, char* argv[]) {
         result = meanShiftOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     else if(algorithm == "omp_soa")
         result = meanShiftSoAOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
+    else if(algorithm == "cuda")
+        result = meanShiftCUDA(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, block_size);
+    else if(algorithm == "cuda_2d")
+        result = meanShiftCUDA2D(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, block_size);
     else
         result = meanShift(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     auto t_ms_end = clock::now();
