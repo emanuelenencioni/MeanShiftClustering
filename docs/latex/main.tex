@@ -227,13 +227,14 @@ float yj = static_cast<float>(j / width);
 On GPU architectures, memory coalescing is critical for throughput. A warp of 32 threads executes one global memory instruction at a time; if all 32 addresses fall within the same 128-byte cache line, the hardware issues a single coalesced transaction. With an AoS layout, each thread reads a 20-byte struct — the warp's addresses span 5 cache lines, requiring 5 transactions. With SoA, each thread reads a consecutive float — all 32 addresses fit in one cache line. The CUDA implementation therefore stores the five feature channels as separate device arrays, matching the SoA layout of \cref{subsec: SoA}. Conversion from the host AoS representation happens once at load time; all iteration data resides on the device.  The \textbf{Spatial Loop} is mapped to the CUDA grid (one thread per output pixel) following the same reasoning as the OpenMP parallelization (\cref{subsec:omp}). 
 
 \subsubsection{Tiled shared-memory}
-Without tiling, each of the N threads reads all N pixels from global memory every iteration — $N^2$ global loads. This can lead to a giant memory bandwidth bottleneck (e.g. 68K pixels and 5 channels this reaches ~93 GB per iteration). With a tiling strategy, each block of B threads cooperatively loads one tile of B pixels from global memory into shared memory (coalesced), then all B threads consume that tile from shared memory (5 cycles latency instead of 500). Over $\lceil N / B \rceil$ tiles, each pixel is loaded from global memory exactly once per iteration, reducing traffic from $O(N^2)$ to $O(N)$ bytes. 
+Without tiling, each of the N threads reads all N pixels from global memory every iteration — $N^2$ global loads (e.g. 68K pixels and 5 channels this reaches ~93 GB per iteration). With a tiling strategy, each block of B threads cooperatively loads one tile of B pixels from global memory into shared memory (coalesced), then all B threads consume that tile from shared memory ($\sim$5 cycles) instead of global memory(hundreds of cycles). Over $\lceil N / B \rceil$ tiles, each pixel is loaded from global memory exactly once per iteration, reducing traffic from $O(N^2)$ to $O(N)$ bytes. 
 
 The kernel structure is shown in Listing~\ref{code:cuda_kernel}. After the tile loop, each thread computes the new pixel value from its accumulated sums and writes it to the output arrays. Convergence tracking uses a float-as-uint atomicMax, relying on the property that IEEE 754 non-negative floats sort identically to their bit patterns.
 
 \subsubsection{Block size selection}
 The block size $B$ controls the shared-memory footprint per block ($5 \times B \times 4$ bytes) and the number of tiles per iteration ($\lceil N / B \rceil$). Supported values are $B \in \{128, 256, 512\}$; $B = 256$ is the default, expected to provide the best balance between shared memory utilization and tile-loop overhead.
 
+Regarding the grid dimensionality, a 2D block mapping is typically beneficial for spatially-local algorithms (e.g., convolution), where it improves cache utilization and boundary control. In this algorithm, however, every pixel is processed independently regardless of its spatial position — the 2D structure offers no exploitable locality. The additional complexity of non-square boundary handling therefore outweighs any potential benefit, making the 1D grid the preferable choice.
 
 
 \section{Testing Environment and Methodology}
@@ -945,6 +946,86 @@ struct NeighborAccumulator {
     float sum_b = 0.0f;
     float weight_sum = 0.0f;
 };
+\end{lstlisting}
+
+%Cuda kernel listing
+\begin{lstlisting}[language=C++, caption={CUDA kernel for mean shift using Structure of Arrays (SoA) representation}, label={code:cuda_kernel}]
+    __global__ void meanShiftKernel(
+    const float* __restrict__ r_in, const float* __restrict__ g_in,
+    const float* __restrict__ b_in, const float* __restrict__ x_in,
+    const float* __restrict__ y_in,
+    float* r_out, float* g_out, float* b_out,
+    int n, float bw_sq, unsigned int* d_max_change_bits)
+{
+    extern __shared__ float sh[];
+    float* sh_r = sh;
+    float* sh_g = sh +     blockDim.x;
+    float* sh_b = sh + 2 * blockDim.x;
+    float* sh_x = sh + 3 * blockDim.x;
+    float* sh_y = sh + 4 * blockDim.x;
+
+    const int i  = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int tx = static_cast<int>(threadIdx.x);
+    const int bs = static_cast<int>(blockDim.x);
+
+    float src_r = 0.f, src_g = 0.f, src_b = 0.f, src_x = 0.f, src_y = 0.f;
+    const bool active = (i < n);
+    if(active) {
+        src_r = r_in[i]; src_g = g_in[i]; src_b = b_in[i];
+        src_x = x_in[i]; src_y = y_in[i];
+    }
+
+    float sum_r = 0.f, sum_g = 0.f, sum_b = 0.f;
+    int count = 0;
+
+    for(int tile_start = 0; tile_start < n; tile_start += bs) {
+        int load_j = tile_start + tx;
+        if(load_j < n) {
+            sh_r[tx] = r_in[load_j];
+            sh_g[tx] = g_in[load_j];
+            sh_b[tx] = b_in[load_j];
+            sh_x[tx] = x_in[load_j];
+            sh_y[tx] = y_in[load_j];
+        }
+        __syncthreads();
+
+        if(active) {
+            int tile_end = min(bs, n - tile_start);
+            for(int jj = 0; jj < tile_end; ++jj) {
+                float dr = src_r - sh_r[jj];
+                float dg = src_g - sh_g[jj];
+                float db = src_b - sh_b[jj];
+                float dx = src_x - sh_x[jj];
+                float dy = src_y - sh_y[jj];
+                float sq = dr*dr + dg*dg + db*db + dx*dx + dy*dy;
+                if(sq <= bw_sq) {
+                    sum_r += sh_r[jj];
+                    sum_g += sh_g[jj];
+                    sum_b += sh_b[jj];
+                    count++;
+                }
+            }
+        }
+        __syncthreads();
+    }
+
+    if(active) {
+        float new_r = (count > 0) ? sum_r / static_cast<float>(count) : src_r;
+        float new_g = (count > 0) ? sum_g / static_cast<float>(count) : src_g;
+        float new_b = (count > 0) ? sum_b / static_cast<float>(count) : src_b;
+
+        float change = fmaxf(fabsf(new_r - src_r),
+                      fmaxf(fabsf(new_g - src_g),
+                            fabsf(new_b - src_b)));
+        r_out[i] = new_r;
+        g_out[i] = new_g;
+        b_out[i] = new_b;
+
+        if(!isnan(change))
+            atomicMax(d_max_change_bits, __float_as_uint(change));
+    }
+}
+
 \end{lstlisting}
 
 \begin{figure*}
