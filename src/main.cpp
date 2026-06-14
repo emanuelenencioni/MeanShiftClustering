@@ -28,6 +28,7 @@ static void printUsage(const char* prog) {
     std::cerr << "  --no-display : skip OpenCV image display window" << std::endl;
     std::cerr << "  --no-output  : skip writing result PNG and log file" << std::endl;
     std::cerr << "  --block-size <N> : CUDA block size (128, 256, 512, default 256)" << std::endl;
+    std::cerr << "  --no-tiling  : CUDA: disable shared-memory tiling (direct global reads)" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -46,6 +47,7 @@ int main(int argc, char* argv[]) {
     bool show_pbar = false;
     bool no_display = false;
     bool no_output = false;
+    bool no_tiling = false;
     int block_size = 256;
     std::vector<const char*> pos_args;
     pos_args.push_back(argv[0]);
@@ -56,6 +58,8 @@ int main(int argc, char* argv[]) {
             no_display = true;
         else if(std::string(argv[i]) == "--no-output")
             no_output = true;
+        else if(std::string(argv[i]) == "--no-tiling")
+            no_tiling = true;
         else if(std::string(argv[i]) == "--block-size") {
             if(i + 1 < argc) {
                 block_size = std::stoi(argv[++i]);
@@ -118,8 +122,12 @@ int main(int argc, char* argv[]) {
         result = meanShiftOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
     else if(algorithm == "omp_soa")
         result = meanShiftSoAOMP(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar);
-    else if(algorithm == "cuda")
-        result = meanShiftCUDA(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, block_size);
+    else if(algorithm == "cuda") {
+        if(no_tiling)
+            result = meanShiftCUDANoTile(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, block_size);
+        else
+            result = meanShiftCUDA(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, block_size);
+    }
     else if(algorithm == "cuda_2d")
         result = meanShiftCUDA2D(data, image.width, bandwidth, max_iter, 1e-3f, show_pbar, block_size);
     else
