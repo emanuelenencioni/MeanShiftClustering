@@ -81,7 +81,11 @@ E-mail address\\
 
 %%%%%%%%% ABSTRACT
 \begin{abstract}
-   This report presents the implementation and performance analysis of different versions of the Mean Shift clustering algorithm\cite{first_mean_shift}, applied to image segmentation. This is a robust non-parametric technique; however, its computational complexity $\mathcal O(N^2)$ presents a significant bottleneck for sequential execution on high-resolution data. In this report, the algorithm was optimized and parallelized using the OpenMP framework. Through an evaluation from a series of experiments (focused on execution time, speedup, and efficiency) The results show that parallel implementation effectively reduces processing time. Furthermore, the report provides a detailed analysis of the performance impact of thread scheduling and memory access patterns, validating the effectiveness of the chosen parallelization strategies.
+    This report presents the implementation and performance analysis of the Mean Shift clustering algorithm for image segmentation. Its $\mathcal O(N^2)$ computational complexity was addressed through three sequential variants (from a baseline to SIMD-vectorized Structure of Arrays) followed by two parallelizations with OpenMP and a GPU-accelerated version using CUDA. The OpenMP variants achieve near-linear speedup ($\sim$11$\times$ at 12 physical cores), while the sequential SoA layout reduces per-pixel-pair cost by $\sim$3$\times$ through auto-vectorization. The CUDA implementation employs a tiled shared-memory kernel that reduces global memory traffic from $\mathcal O(N^2)$ to $\mathcal O(N)$ bytes per iteration and achieves a further 14-206$\times$ (exceeding 150x speedup on larger images) speedup over sequential viariants. The report analyses the performance impact of memory layout, bandwidth, thread count, and hardware counter data across all implementations.
+
+
+
+%    This report presents the implementation and performance analysis of different versions of the Mean Shift clustering algorithm\cite{first_mean_shift}, applied to image segmentation. This is a robust non-parametric technique; however, its computational complexity $\mathcal O(N^2)$ presents a significant bottleneck for sequential execution on high-resolution data. In this report, the algorithm was optimized and parallelized using the OpenMP framework and also CUDA. Through an evaluation from a series of experiments (focused on execution time, speedup, and efficiency) The results show that parallel implementation effectively reduces processing time. Furthermore, the report provides a detailed analysis of the performance impact of thread scheduling and memory access patterns, validating the effectiveness of the chosen parallelization strategies.
 \end{abstract}
 
 %%%%%%%%% BODY TEXT
@@ -109,7 +113,8 @@ Within a Brute-force approach, each of the $N$ pixels must query all the other $
 \end{figure}
 
 \section{language and frameworks}
-The implementation is developed in C++, selected for its ability to provide explicit control over memory alignment and hardware-level optimizations required for high-performance computing. The software architecture leverages SIMD Vectorization since C++ enables the use of compiler intrinsics and auto-vectorization (e.g., AVX2/AVX-512) to exploit Instruction-Level Parallelism. In this way, the 5D distance calculations can be processed as vector operations, significantly increasing the floating-point throughput per clock cycle. Parallelism is achieved through the OpenMP framework, which is uniquely suited to Mean Shift\cite{first_mean_shift} due to its embarrassingly parallel nature.  Since the mode-seeking trajectory of each pixel is independent, the workload allows for a data parallel decomposition. Lastly, OpenCV is utilized as a post-processing tool for data visualization and qualitative analysis of the segmentation boundaries.
+The implementation is developed in C++, selected for its ability to provide explicit control over memory alignment and hardware-level optimizations required for high-performance computing. The software architecture leverages SIMD Vectorization since C++ enables the use of compiler intrinsics and auto-vectorization (e.g., AVX2/AVX-512) to exploit Instruction-Level Parallelism. In this way, the 5D distance calculations can be processed as vector operations, significantly increasing the floating-point throughput per clock cycle. Parallelism is achieved through the OpenMP framework, which is uniquely suited to Mean Shift\cite{first_mean_shift} due to its embarrassingly parallel nature.  Since the mode-seeking trajectory of each pixel is independent, the workload allows for a data parallel decomposition. Then a CUDA (12.9) implementation is also provided to leverage the massive parallelism of modern GPUs, which can further accelerate the algorithm by distributing the computation across thousands of threads.
+Lastly, OpenCV is utilized as a post-processing tool for data visualization and qualitative analysis of the segmentation boundaries.
 
 \section{Methodology}\label{sec:method}
 This current project will see different implementations designed specifically for three-channel RGB images, focusing on the standard 5D joint spatial-range domain. For a proper performance analysis, the basic form of the algorithm was first implemented using brute-force approach with sequential computation ( $\mathcal O(N^2)$). Then it follows a progressive optimization path to address specific bottlenecks:
@@ -118,6 +123,7 @@ This current project will see different implementations designed specifically fo
 \item \textbf{Structure of Arrays (\texttt{soa})}, A memory-reorganization approach aimed at improving data locality and helping SIMD auto-vectorization.
 \item \textbf{Parallel AoS (\texttt{omp})}, A multi-threaded implementation utilizing OpenMP on the interleaved memory layout.
 \item \textbf{Parallel SoA (\texttt{omp\_soa})}, A hybrid approach combining the benefits of the SoA layout with shared-memory parallelization.
+\item \textbf{CUDA Implementation}, A GPU-accelerated version designed to leverage the massive parallelism of modern graphics hardware.
 \end{enumerate}
 All the code of each implementation is available in the Appendix \ref{sec:appendix}.
 
@@ -162,7 +168,7 @@ To mitigate these limitations, the Structure of Arrays (SoA) implementation reor
 \end{enumerate}
 The transition from the interleaved \texttt{stb\_image} format to this SoA representation is handled during the initialization phase. 
 
-\subsection{\textit{omp} implementation}
+\subsection{\textit{omp} implementation}\label{subsec:omp}
 In this other implementation an attempt to parallelize the seq implementation was made trying to achieve even more performance boost. The analysis started from the identification of the optimal level of parallelism on each loop: the \textbf{temporal loop}, the external one, is not parallelizable due to temporal dependencies (the new iteration depend on the previous one), the \textbf{neighbor loop} (innermost) would trigger a "fork-join" operation, for example, given an image with a standard resolution, this would results in hundreds of thousands of thread synchronization per second, leading to massive overhead that would dwarf the actual computation. The \textbf{Spatial loop} is the answer, Each thread is assigned to a contiguous block of pixels to process independently.
 
 \subsubsection{Reduction and thread safety}
@@ -218,6 +224,17 @@ float xj = static_cast<float>(j % width);
 float yj = static_cast<float>(j / width);
 \end{lstlisting}
 \subsection{CUDA implementation}
+On GPU architectures, memory coalescing is critical for throughput. A warp of 32 threads executes one global memory instruction at a time; if all 32 addresses fall within the same 128-byte cache line, the hardware issues a single coalesced transaction. With an AoS layout, each thread reads a 20-byte struct — the warp's addresses span 5 cache lines, requiring 5 transactions. With SoA, each thread reads a consecutive float — all 32 addresses fit in one cache line. The CUDA implementation therefore stores the five feature channels as separate device arrays, matching the SoA layout of \cref{subsec: SoA}. Conversion from the host AoS representation happens once at load time; all iteration data resides on the device.  The \textbf{Spatial Loop} is mapped to the CUDA grid (one thread per output pixel) following the same reasoning as the OpenMP parallelization (\cref{subsec:omp}). 
+
+\subsubsection{Tiled shared-memory}
+Without tiling, each of the N threads reads all N pixels from global memory every iteration — $N^2$ global loads. This can lead to a giant memory bandwidth bottleneck (e.g. 68K pixels and 5 channels this reaches ~93 GB per iteration). With a tiling strategy, each block of B threads cooperatively loads one tile of B pixels from global memory into shared memory (coalesced), then all B threads consume that tile from shared memory (5 cycles latency instead of 500). Over $\lceil N / B \rceil$ tiles, each pixel is loaded from global memory exactly once per iteration, reducing traffic from $O(N^2)$ to $O(N)$ bytes. 
+
+The kernel structure is shown in Listing~\ref{code:cuda_kernel}. After the tile loop, each thread computes the new pixel value from its accumulated sums and writes it to the output arrays. Convergence tracking uses a float-as-uint atomicMax, relying on the property that IEEE 754 non-negative floats sort identically to their bit patterns.
+
+\subsubsection{Block size selection}
+The block size $B$ controls the shared-memory footprint per block ($5 \times B \times 4$ bytes) and the number of tiles per iteration ($\lceil N / B \rceil$). Supported values are $B \in \{128, 256, 512\}$; $B = 256$ is the default, expected to provide the best balance between shared memory utilization and tile-loop overhead.
+
+
 
 \section{Testing Environment and Methodology}
 The experiments were conducted on a workstation featuring the AMD Ryzen 9 9900X processor, based on the Zen 5 architecture. This CPU provides 12 physical cores (24 logical threads via SMT) with a 64 MiB shared L3 cache. In \cref{tab:components} are summarized more software and hardware specifications. 32 GB of RAM and a Nvidia GeForce GTX 1060 with 6GB of VRAM. The experimental evaluation was conducted on a workstation featuring an AMD Ryzen 9 9900X processor. This CPU integrates 12 physical cores with 24 logical threads via Simultaneous Multithreading (SMT) and features a 64 MiB shared L3 cache. The system is also equipped with 32 GB of main memory and an NVIDIA GeForce GTX 1060 GPU with 6 GB of VRAM. A comprehensive summary of the hardware and software environment is provided in \cref{tab:components}.
