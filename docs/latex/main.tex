@@ -64,10 +64,11 @@
 \if4cvprfinal\pagestyle{empty}\fi
 \begin{document}
 %%%%%%%%% TITLE
-\title{MeanShift: Analysis of speedup achieved through parallel programming on CPU}
+\title{MeanShift: Analysis of speedup achieved through parallel programming on CPU and GPU}
 
 \author{Emanuele nencioni\\
-E-mail address\\
+Department of Information Engineering
+University of Florence\\
 {\tt\small emanuele.nencioni@edu.unifi.it}
 % For a paper whose authors are all at the same institution,
 % omit the following lines up until the closing ``}''.
@@ -81,7 +82,7 @@ E-mail address\\
 
 %%%%%%%%% ABSTRACT
 \begin{abstract}
-    This report presents the implementation and performance analysis of the Mean Shift clustering algorithm for image segmentation. Its $\mathcal O(N^2)$ computational complexity was addressed through three sequential variants (from a baseline to SIMD-vectorized Structure of Arrays) followed by two parallelizations with OpenMP and a GPU-accelerated version using CUDA. The OpenMP variants achieve near-linear speedup ($\sim$11$\times$ at 12 physical cores), while the sequential SoA layout reduces per-pixel-pair cost by $\sim$3$\times$ through auto-vectorization. The CUDA implementation employs a tiled shared-memory kernel that reduces global memory traffic from $\mathcal O(N^2)$ to $\mathcal O(N)$ bytes per iteration and achieves a further 14-206$\times$ (exceeding 150x speedup on larger images) speedup over sequential viariants. The report analyses the performance impact of memory layout, bandwidth, thread count, and hardware counter data across all implementations.
+    This report presents the implementation and performance analysis of the Mean Shift clustering algorithm for image segmentation. Its $\mathcal O(N^2)$ computational complexity was addressed through three sequential variants (from a baseline to SIMD-vectorized Structure of Arrays) followed by two parallelizations with OpenMP and a GPU-accelerated version using CUDA. The OpenMP variants achieve near-linear speedup ($\sim$11$\times$ at 12 physical cores), while the sequential SoA layout reduces per-pixel-pair cost by $\sim$3$\times$ through auto-vectorization. The CUDA implementation employs a tiled shared-memory kernel that reduces global memory traffic from $\mathcal O(N^2)$ to $\mathcal O(N)$ bytes per iteration and achieves a further 14-206$\times$ speedup over sequential variants. The report analyses the performance impact of memory layout, bandwidth, thread count, and hardware counter data across all implementations.
 
 
 
@@ -112,7 +113,7 @@ Within a Brute-force approach, each of the $N$ pixels must query all the other $
     \label{fig:mshift}
 \end{figure}
 
-\section{language and frameworks}
+\section{Language and frameworks}
 The implementation is developed in C++, selected for its ability to provide explicit control over memory alignment and hardware-level optimizations required for high-performance computing. The software architecture leverages SIMD Vectorization since C++ enables the use of compiler intrinsics and auto-vectorization (e.g., AVX2/AVX-512) to exploit Instruction-Level Parallelism. In this way, the 5D distance calculations can be processed as vector operations, significantly increasing the floating-point throughput per clock cycle. Parallelism is achieved through the OpenMP framework, which is uniquely suited to Mean Shift\cite{first_mean_shift} due to its embarrassingly parallel nature.  Since the mode-seeking trajectory of each pixel is independent, the workload allows for a data parallel decomposition. Then a CUDA (12.9) implementation is also provided to leverage the massive parallelism of modern GPUs, which can further accelerate the algorithm by distributing the computation across thousands of threads.
 Lastly, OpenCV is utilized as a post-processing tool for data visualization and qualitative analysis of the segmentation boundaries.
 
@@ -223,6 +224,11 @@ As previously established, the SoA layout is a prerequisite for efficient SIMD o
 float xj = static_cast<float>(j % width);
 float yj = static_cast<float>(j / width);
 \end{lstlisting}
+
+\subsection{The kernel problem}\label{subsec:kernel_choice}
+All implementations employ a compile-time flat (uniform) kernel rather than a runtime-selectable function pointer. A runtime-selectable design was evaluated but discarded: an indirect function call inside the \texttt{spatial loop} prevents the compiler from auto-vectorizing the SoA and \texttt{omp\_soa} variants, as the call site is opaque to the vectorizer. Since the project focuses on parallel efficiency rather than segmentation quality, a hardcoded flat kernel is the correct trade-off. The performance impact of this design constraint is documented in Appendix~\ref{fig:kernel_problem}.
+
+
 \subsection{CUDA implementation}\label{subsec:cuda_impl}
 On GPU architectures, memory coalescing is critical for throughput. A warp of 32 threads executes one global memory instruction at a time; if all 32 addresses fall within the same 128-byte cache line, the hardware issues a single coalesced transaction. With an AoS layout, each thread reads a 20-byte struct — the warp's addresses span 5 cache lines, requiring 5 transactions. With SoA, each thread reads a consecutive float — all 32 addresses fit in one cache line. The CUDA implementation therefore stores the five feature channels as separate device arrays, matching the SoA layout of \cref{subsec: SoA}. Conversion from the host AoS representation happens once at load time; all iteration data resides on the device.  The \textbf{Spatial Loop} is mapped to the CUDA grid (one thread per output pixel) following the same reasoning as the OpenMP parallelization (\cref{subsec:omp}). 
 
@@ -238,7 +244,7 @@ Regarding the grid dimensionality, a 2D block mapping is typically beneficial fo
 
 
 \section{Testing Environment and Methodology}
-The experiments were conducted on a workstation featuring the AMD Ryzen 9 9900X processor, based on the Zen 5 architecture. This CPU provides 12 physical cores (24 logical threads via SMT) with a 64 MiB shared L3 cache. In \cref{tab:components} are summarized more software and hardware specifications. 32 GB of RAM and a Nvidia GeForce GTX 1060 with 6GB of VRAM. The experimental evaluation was conducted on a workstation featuring an AMD Ryzen 9 9900X processor. This CPU integrates 12 physical cores with 24 logical threads via Simultaneous Multithreading (SMT) and features a 64 MiB shared L3 cache. The system is also equipped with 32 GB of main memory and an NVIDIA GeForce GTX 1060 GPU with 6 GB of VRAM. A comprehensive summary of the hardware and software environment is provided in \cref{tab:components}.
+The experiments were conducted on a workstation featuring the AMD Ryzen 9 9900X processor, based on the Zen 5 architecture. This CPU provides 12 physical cores (24 logical threads via SMT) with a 64 MiB shared L3 cache. In \cref{tab:components} are summarized more software and hardware specifications. 32 GB of RAM and a Nvidia GeForce GTX 1060 with 6GB of VRAM.
 
 \begin{table}[]
     \centering
@@ -261,10 +267,12 @@ The experiments were conducted on a workstation featuring the AMD Ryzen 9 9900X 
     \label{tab:components}
 \end{table}
 
-\subsubsection{Clock Selection and Benchmarking Methodology}
+\subsection{Clock Selection and Benchmarking Methodology}
 For all performance measurements, \texttt{std::chrono::steady\_clock} was used instead of \texttt{std::chrono::high\_resolution\_clock}. While the latter suggests higher precision, the C++ standard does not guaranty its steadiness; on some implementations, it may alias the system wall-clock, making it susceptible to timing discontinuities (e.g. NTP adjustments). In contrast, \texttt{steady\_clock} is guaranteed to be monotonic, ensuring that elapsed time measurements remain consistent and reproducible across different execution environments. On the Ryzen 9900X test platform, this clock provides nanosecond resolution, which is more than sufficient for capturing the micro-scale performance in the different  implementations.
 
-\subsubsection{Dataset and benchmark setup}
+For GPU measurements, CUDA events (\texttt{cudaEventRecord}, \texttt{cudaEventElapsedTime}) were used instead. These are measured on the GPU clock directly, providing operating-system-independent timing of kernel execution without including CPU-side overhead or PCIe transfer latency.
+
+\subsection{Dataset and benchmark setup}
 The testing methodology was rigorously designed  to evaluate the scalability and architectural efficiency of the various Mean Shift\cite{first_mean_shift} implementations. This isolates computational workload (pixel count) from convergence complexity (image texture and gradients)
 
 \subsubsection{Dataset}
@@ -277,15 +285,10 @@ Parallel scaling analysis requires speedup $(S = T_1 / T_p)$ to be defined over 
 
 
 Additionally, for every single test configuration (image, algorithm, and thread count), an initial unmeasured run is executed to warm up the hardware state. This preliminary execution ensures that the L1/L2 data and instruction caches are populated, branch predictors are primed, and operating system demand-paging overheads are resolved. Consequently, the subsequent timed iterations strictly measure the steady-state algorithmic performance, preventing initialization latency from skewing the microarchitectural profiling.
-\section{Result and discussion}
-This section presents the performance evaluation of the four Mean Shift implementations. By sweeping across a multi-dimensional benchmark matrix, we analyze how the architectural optimizations discussed in \cref{sec:method} translate into real-world speedups on modern consumer hardware. TALK HERE ABOUT perf.
+\section{Results and discussion}
+This section evaluates the five implementations described in \cref{sec:method}.
+All results use the hardcoded flat kernel discussed in \cref{subsec:kernel_choice}.
 
-\subsubsection{The kernel problem}
-At first, a runtime-selectable kernel was implemented to test each one within the benchmark. This outlined a problem: SIMD operations can only be utilized when there is no variability in this function. Since the kernel is choosen at runtime, all the benchmark resulted in worst cases possible using SoA. Given that the project doesn't have to focus on the kernel quality of the segmentation results, It was decided to hard code the flat kernel. A deeper  analysis of this problem can be found in the Appendix(\cref{fig:kernel_problem}).
-
-
-%%% Parlare di cosa si può cambiare: bandwith, kernel... img_size, tante variabili
-%%%
 \subsection{SoA vs seq vs baseline} \label{subsec:soa_seq_base}
 The empirical results corroborate the architectural design choices detailed in \cref{sec:method}. As shown in \cref{fig:aos_soa}, the performance hierarchy remains consistent across all resolution tiers, with the SoA variant providing the most significant reduction in execution latency. The substantial time reduction observed for the SoA variant over the Baseline validates the transition to unit-stride memory access discussed in \cref{subsec: SoA}. While the seq(AoS) version reduces ALU pressure by pre-computing coordinates, the SoA version successfully mitigates the "cache pollution" inherent in interleaved data structures, allowing the hardware to maximize throughput.  Is important to notice the  near-identical performance in varying bandwidth parameters ($h$). This will be explored further in \cref{subsubsec:profiling}.
 Lastly, the absolute gap between baseline and optimized variants (\texttt{seq} and \texttt{soa}) widens at larger resolutions, a natural consequence of all three sharing the same $\mathcal O(n^2)$ scaling multiplied by different per-pixel constants. This confirms that the overhead of on-the-fly coordinate recomputation (\cref{code:aos_spatial}) dominates the execution time as $N$ grows, while the optimized versions (\cref{subsec:seq} \& \cref{subsec: SoA}) maintain a more favorable scaling curve by shifting the workload to vectorizable floating-point operations. 
@@ -309,7 +312,7 @@ Lastly, the absolute gap between baseline and optimized variants (\texttt{seq} a
 
 
 \subsubsection{Some deeper analysis} \label{subsubsec:profiling}
-Let's look deep into the \cref{fig:aos_soa}, what maybe we could expect is the theoretical increase in the spatial search range when $h=100$, but the execution time does not scale linearly with the search volume. The $\mathcal O(N^2)$ 5D distance computation dominates (95-98\% of cycles), and the bandwidth only controls the branch-taken rate of the accumulator (2-5\%) this because the brute force inner loop iterates over all N pixels regardless of bandwidth, computing the full 5D distance. The bottleneck is therefore the quadratic distance computation (flat kernel), confirming the parallelization strategy is correctly targeted. The \texttt{perf} hardware-counter data sheds further light on how each memory
+As shown in \cref{fig:aos_soa}, one might expect execution time to scale with the theoretical search volume when $h=100$; however the execution time does not scale linearly with the search volume. The $\mathcal O(N^2)$ 5D distance computation dominates (95-98\% of cycles), and the bandwidth only controls the branch-taken rate of the accumulator (2-5\%) this because the brute force inner loop iterates over all N pixels regardless of bandwidth, computing the full 5D distance. The bottleneck is therefore the quadratic distance computation (flat kernel), confirming the parallelization strategy is correctly targeted. The \texttt{perf} hardware-counter data sheds further light on how each memory
 layout achieves its throughput at the microarchitectural level.
 As shown in \cref{tab:performance_comparison}, the per-instruction metrics produce a counter-intuitive picture: the \texttt{soa} implementation exhibits a higher L1\,D-cache miss rate and a lower IPC than both \texttt{seq} and \texttt{baseline}. Taken in isolation, these figures would suggest that the SoA memory layout is \emph{detrimental} to cache behavior. However, inspecting the raw counter values reveals that this interpretation is incorrect. As \cref{fig:profile_l1_miss_count} shows, the \emph{absolute} number of L1\,D-cache misses is virtually identical across all three implementations $\approx 294\,\text{M}$). The elevated miss \emph{rate} is therefore an arithmetic artifact rather than a sign of additional cache pressure. The root cause is visible in \cref{fig:profile_l1_loads,fig:profile_instructions}:
 the \texttt{soa} implementation issues approximately $3\times$ fewer load operations
@@ -365,7 +368,7 @@ Speedup improves with image size -larger n means the $\mathcal O(n^2)$ parallel 
 \paragraph{Bandwidth effect}
 \begin{table}
 \centering
-\caption{Execution time (shift\_ms) at 1 thread across bandwidth.}
+\caption{Execution time (shift\_ms) at 1 thread across bandwidth. (In seconds)}
 \label{tab:bw_dependency}
 \begin{tabular}{l r r}
 \toprule
@@ -379,7 +382,7 @@ Bandwidth & \texttt{omp} (AoS) & \texttt{omp\_soa} (SoA) \\
 \bottomrule
 \end{tabular}
 \end{table}
-For \texttt{omp}, bandwidth has no measurable effect . speedup is $\approx 11\times$ regardless of bandwidth (\cref{tab:bw_dependency}). Same as sequential. For \texttt{omp\_soa}, the store is more nuanced: the absolute time at 1 thread varies with bandwidth ($\approx 33$ s at bw=20 vs $54$ s at bw=1000), but the speedup ration remains similar. This suggest the bandwidth affetcs the per-pixel-pair constant C in the SoA layout but not the parallel efficiency itself.
+For \texttt{omp}, bandwidth has no measurable effect . speedup is $\approx 11\times$ regardless of bandwidth (\cref{tab:bw_dependency}). Same as sequential. For \texttt{omp\_soa}, the store is more nuanced: the absolute time at 1 thread varies with bandwidth ($\approx 33$ s at bw=20 vs $54$ s at bw=1000), but the speedup ration remains similar. This suggests the bandwidth affetcs the per-pixel-pair constant C in the SoA layout but not the parallel efficiency itself.
 \paragraph{SMT}
 Marginal gain from 12 to 24 threads ($\approx 11\times$ to $\approx 11.5\times$) confirms the workload is compute-bound on physical cores; hyperthreading only helps hide remaining pipeline stalls rather than adding throughput (see \S\cref{subsec:scaling_profiling} for the full hardware analysis).
 
@@ -406,7 +409,7 @@ Scenario & \texttt{omp} & \texttt{omp\_soa} & Faster \\
 As shown in Table~\ref{tab:omp_comparison}, the SoA SIMD advantage only pays off at small bandwidths. At large bandwidths, the extra instruction count and memory stream overhead dominate, making \texttt{omp} faster despite its better IPC and cache behavior. Overall, the parallelization achieves near-linear speedup ($\sim$11$\times$ at 12 cores), confirming the workload is embarrassingly parallel, while the choice of memory layout interacts with bandwidth in ways that do not affect parallel efficiency.
 
 \subsection{CUDA}
-The CUDA implementation was evaluated on the same benchmark matrix as the CPU variants. Numerical reproducibility across implementations was verified for the benchmark configuration: with a fixed number of iterations (max\_iter=5) and Jacobi semantics, all variants produce identical output images. Under full convergence to a tolerance, floating-point summation order could theoretically cause minor divergences near the rounding boundary (\cref{sec:conclusion}).
+The CUDA implementation was evaluated on the same benchmark matrix as the CPU variants. Numerical reproducibility across implementations was verified for the benchmark configuration: with a fixed number of iterations (max\_iter=5) and Jacobi semantics, all variants produce identical output images. Under full convergence to a tolerance, floating-point summation order could theoretically cause minor divergences near the rounding boundary (\cref{subsec:numerical}).
 
 Performance-wise, the GPU results are shown in \cref{fig:gpu_layout_time}. A 2D kernel variant was also evaluated, but its negligible advantage confirms that the 2D grid offers no exploitable locality benefit: every pixel independently scans all N others, so thread position in the image does not affect memory access.
 
@@ -441,7 +444,7 @@ Performance-wise, the GPU results are shown in \cref{fig:gpu_layout_time}. A 2D 
     \label{fig:gpu_speedup_vs_cpu}
 \end{figure}
 \paragraph{Sensitivity analysis}
-The kernel breakdown (\cref{fig:gpu_breakdown}) separates execution time into three components: \texttt{convert\_ms} (host conversion between AoS uint8 and SoA float, plus H2D and D2H PCIe transfers), \texttt{shift\_ms} (pure GPU kernel computation, measured via CUDA events), and the remaining overhead. For small images, \texttt{convert\_ms} dominates — the GPU is underutilized, limiting speedup. For large images, \texttt{shift\_ms} dominates, confirming the GPU is fully saturated and explaining why kernel launch overhead and block size have negligible impact, as shown in \cref{fig:gpu_block}. This compares execution times for block sizes 128, 256, and 512. All three produce nearly identical results, confirming that occupancy is not a bottleneck for this workload — the algorithm is bound by memory latency and arithmetic throughput rather than thread count. The GPU also exhibits bandwidth invariance consistent with the sequential analysis: execution time is independent of bandwidth for both the 1D and 2D variants, as expected for a brute-force O(n²) algorithm where the inner loop always scans all N pixels regardless of bandwidth. Additionally, the tile benchmark (without shared memory) shows that the tiling strategy provides approximately 2$\times$ speedup over a direct global-memory kernel on large images, validating the shared-memory optimization discussed in \cref{subsec:cuda_impl}.
+The kernel breakdown (\cref{fig:gpu_breakdown}) separates execution time into three components: \texttt{convert\_ms} (host conversion between AoS uint8 and SoA float, plus H2D and D2H PCIe transfers), \texttt{shift\_ms} (pure GPU kernel computation, measured via CUDA events), and the remaining overhead. For small images, \texttt{convert\_ms} dominates — the GPU is underutilized, limiting speedup. For large images, \texttt{shift\_ms} dominates, confirming the GPU is fully saturated and explaining why kernel launch overhead and block size have negligible impact, as shown in \cref{fig:gpu_block}. This compares execution times for block sizes 128, 256, and 512. All three produce nearly identical results, confirming that occupancy is not a bottleneck for this workload — the algorithm is bound by memory latency and arithmetic throughput rather than thread count. The GPU also exhibits bandwidth invariance consistent with the sequential analysis: execution time is independent of bandwidth for both the 1D and 2D variants, as expected for a brute-force O(n²) algorithm where the inner loop always scans all N pixels regardless of bandwidth. Additionally, the tile benchmark  (\cref{fig:tile_speedup}) confirms the shared-memory optimization: tiling provides approximately 2$\times$ speedup on large images, with the benefit growing with resolution as the GPU becomes more saturated, validating the shared-memory optimization discussed in \cref{subsec:cuda_impl}.
 
 \begin{figure}
     \includegraphics[width=1.05\linewidth]{images/fig_gpu_block_comparison.png}
@@ -456,19 +459,54 @@ The kernel breakdown (\cref{fig:gpu_breakdown}) separates execution time into th
 \end{figure}
 
 \section{Conclusion}\label{sec:conclusion}
+This report presented an educational exploration of parallel programming 
+techniques applied to the Mean Shift clustering algorithm. Starting from a 
+naive sequential baseline, each implementation addressed a specific performance 
+bottleneck: memory layout reorganization and SIMD auto-vectorization, 
+shared-memory multi-threading with OpenMP ($\sim$11$\times$ at 12 cores), and 
+GPU acceleration with a tiled shared-memory CUDA kernel (up to 203$\times$ over 
+the sequential baseline).
 
-\paragraph{Numerical precision limitations}
+The most counter-intuitive finding concerns the SoA layout under OpenMP 
+parallelization. While SoA provides a consistent $\sim$3$\times$ advantage in 
+the sequential regime through SIMD widening, this advantage inverts at large 
+bandwidths in the parallel setting (\cref{tab:omp_comparison}): the 14\% 
+instruction-count overhead of managing five separate memory streams outweighs 
+the SIMD gain when the accumulator branch-taken rate is high. This result 
+demonstrates that memory layout optimizations cannot be evaluated in isolation 
+— their effectiveness is conditional on both the kernel structure and the 
+operating bandwidth regime.
+
+Regarding practical deployment, the choice between OpenMP and CUDA is 
+primarily governed by image size. For small images (below $\sim$10K pixels), 
+PCIe transfer overhead causes \texttt{convert\_ms} to dominate 
+(\cref{fig:gpu_breakdown}), making the 12-core OpenMP variant the more 
+efficient choice. For larger images, the GPU's throughput advantage dominates 
+and the $203\times$ peak speedup is achievable. In both cases, however, the 
+$\mathcal{O}(N^2)$ brute-force complexity remains the fundamental bottleneck: 
+a grid-accelerated neighbor search — reducing complexity to 
+$\mathcal{O}(N \log N)$ or better — would provide a more significant 
+improvement than any parallelization strategy applied to the brute-force kernel.
+
+\subsection{Numerical precision limitations}\label{subsec:numerical}
 It should be noted that numerical reproducibility across implementations is not guaranteed. While Jacobi semantics ensures all variants read from the same snapshot at the start of each iteration, the accumulation of floating-point summations in different orders (sequential, OpenMP reduction, CUDA atomicMax) introduces path-dependent rounding errors. Over multiple iterations, these differences can compound and, in pixels near the uint8 rounding boundary, may produce divergent output values. For the benchmark configuration (max\_iter=5), the differences are negligible; for full convergence, they could theoretically shift a small fraction of pixels by one uint8 level.
 
-\paragraph{Future work}
-Future work can be focused on improving numerical consistency across parallel variants, or adopting a deterministic reduction strategy for the convergence check to guarantee identical iteration counts.
+\subsection{Future work}
+Future work could explore, numerical consistency through compensated summation to guarantee identical iteration counts across all variants, and explicit SIMD intrinsics to ensure vectorization independently of the memory layout.
+
 
 %------------------------------------------------------------------------
 {\small
 \bibliographystyle{ieee}
 \bibliography{egbib}
 }
-
+\begin{figure}
+	\includegraphics[width=\linewidth]{images/fig_tile_speedup_vs_resolution.png}
+	\caption{Speedup of the tiled kernel over the non-tiled version across resolution
+		tiers. The tiling benefit grows with image size, reaching $\sim$2$\times$
+		on the largest images.}
+	\label{fig:tile_speedup}
+\end{figure}
 
 \begin{figure*}[t]
 	\centering
@@ -510,6 +548,9 @@ Future work can be focused on improving numerical consistency across parallel va
 	\end{center}
 \end{figure*}
 
+
+
+\newpage
 \section{Appendix}\label{sec:appendix}
 \subsection{The Baseline algorithm}\label{subsec:baseline}
 
@@ -1001,7 +1042,7 @@ struct NeighborAccumulator {
     float weight_sum = 0.0f;
 };
 \end{lstlisting}
-
+\subsection{CUDA meanshift algorithm}
 %Cuda kernel listing
 \begin{lstlisting}[language=C++, caption={CUDA kernel for mean shift using Structure of Arrays (SoA) representation}, label={code:cuda_kernel}]
     __global__ void meanShiftKernel(
@@ -1119,10 +1160,10 @@ The execution time of each brute-force variant is modeled as $T = C \times n^2 \
     \item \textbf{ALU operations}, 5D squared distance (14 FLOP) + kernel comparison + conditional accumulation,
     \item \textbf{overhead}, loop control, integer division/modulo (baseline only), pipeline stalls.
 \end{itemize}
-Empirical values derived from benchmarks: $C_{\text{baseline}} \approx 1.98$, $C_{\text{seq}} \approx 1.75$, $C_{\text{soa}} \approx 0.68$ (where $X/Y/Z$ are in ns or cycles per pixel-pair). The ratio $C_{\text{baseline}} / C_{\text{soa}} \approx 2.93$ confirms that SoA's SIMD vectorization processes multiple pixels per instruction, while the constant speedup across resolutions follows from the $n^2$ cancellation — the same analysis referenced in \cref{subsubsec:profiling}.
+Empirical values derived from benchmarks: $C_{\text{baseline}} \approx 1.98$, $C_{\text{seq}} \approx 1.75$, $C_{\text{soa}} \approx 0.68$ (ns or cycles per pixel-pair). The ratio $C_{\text{baseline}} / C_{\text{soa}} \approx 2.93$ confirms that SoA's SIMD vectorization processes multiple pixels per instruction, while the constant speedup across resolutions follows from the $n^2$ cancellation — the same analysis referenced in \cref{subsubsec:profiling}.
 
 \subsection{Scaling profiling}\label{subsec:scaling_profiling}
-Profiling was conducted via \texttt{perf stat} on two images (add res here) for both \texttt{omp} and \texttt{omp\_soa} at thread count 1,2,4,8,12 and 24, with 3 runs per configuration. Measured events included cycles, instructions, L1 data cache loads and misses, and backend stalls.
+Profiling was conducted via \texttt{perf stat} on two images (100$\times$67 and 150$\times$100) for both \texttt{omp} and \texttt{omp\_soa} at thread count 1,2,4,8,12 and 24, with 3 runs per configuration. Measured events included cycles, instructions, L1 data cache loads and misses, and backend stalls.
 
 Profiling confirms three findings. First, OpenMP adds zero instruction overhead (\cref{fig:scaling_instructions}) — the count is identical at every thread count. The SoA variant executes approximately 14\% more instructions than AoS ($229 \times 10^9$ vs $201 \times 10^9$), a fixed tax for managing five separate memory streams, but compensates with higher IPC (4.1 vs 2.9). Second, the SoA cache advantage persists across all thread counts (\cref{fig:scaling_l1}): L1 miss rate is 1.7\% vs 12.6\% for AoS, with only mild degradation at 24T (1.85\%). The absolute L1 miss count is virtually identical for both, confirming the sequential analysis in \S\ref{subsubsec:profiling}: the rate difference is a SIMD artifact. Third, backend stalls/cycle (\cref{fig:scaling_stalls}) are consistently lower for SoA ($\sim$3.5 vs $\sim$5.1), and CPU cycles (\cref{fig:scaling_cycles}) are flat up to 12 physical cores but approximately double at 24 threads under SMT. The $\sim$45\% IPC drop at 24T is identical for both layouts, indicating a hardware-level SMT bottleneck rather than anything layout-dependent.
 In summary, the profiling data confirms that OpenMP parallelization introduces zero instruction overhead, that the SoA advantage (higher IPC, lower L1 miss rate, fewer backend stalls) persists across all thread counts, and that the only significant performance degradation occurs under SMT (24 threads), where hardware resource contention affects both layouts equally. 
@@ -1191,35 +1232,3 @@ Cycles (norm)      & 1.00       & 1.02       & 1.92  \\
 \end{document}
 
 
-
-
-
-%%% Some comments:
-Parallelize outer for i in 0..n — each pixel's new position is independent (Jacobi). This is what we implement.
-The inner for j sum that determines which pixels fall within the bandwidth. Could be parallelized with a thread-local reduction, but less efficient than outer loop. Documented as a considered alternative.
-Post-processing: label pixels that converged to the same mode as the same cluster. Our code doesn't have an explicit mode detection step (colors after convergence serve as cluster labels implicitly), but this step would be fully parallelizable if added. Documented.
-%%% 
-
-\subsection{Data Structures}
-A central challenge in implementing the 5D Mean Shift algorithm is managing memory access patterns within the $O(N^2)$ inner loop. We evaluate two primary data layouts for image storage: \textbf{Array of Structures (AoS)} and \textbf{Structure of Arrays (SoA)}. These layouts significantly impact cache line utilization and the compiler’s ability to generate SIMD instructions. The initial image data provided by the \texttt{stb\_image} library is stored in a standard interleaved RGB buffer, which we then transform into our internal feature space representation.
-
-\subsubsection{Baseline Implementation (AoS)}
-The baseline implementation utilizes an implicit \textbf{Array of Structures (AoS)} layout to represent the image data. In this configuration, the color channels are interleaved and stored contiguously in memory as $[R_0, G_0, B_0, R_1, G_1, B_1, \dots]$, as shown in Listing~\ref{code:aos_impl}. 
-
-To minimize the memory footprint of this baseline version, spatial coordinates $(x, y)$ are not explicitly stored in the feature vector. Instead, they are derived dynamically from the pixel index $j$ and the image width during each iteration of the inner loop (Listing~\ref{code:aos_spatial}). 
-
-
-
-While this approach minimizes memory consumption, it introduces a significant computational bottleneck. Integer division (\texttt{/}) and modulo (\texttt{\%}) are high-latency instructions; performing these operations $N^2$ times per iteration makes the inner loop heavily \textbf{compute-bound}. Profiling indicated that the CPU cycles spent on coordinate calculation significantly outweighed the distance math itself. 
-
-To mitigate this, we transitioned to a strategy where spatial coordinates are pre-computed and stored alongside color values. This adjustment trades a minor increase in memory usage for a substantial reduction in per-iteration execution time, effectively shifting the bottleneck from the ALU to the memory subsystem. This transition laid the groundwork for the \textbf{Structure of Arrays (SoA)} optimization discussed in the following section.
-
-
-\subsubsection{Baseline Implementation (AoS)}
-The baseline implementation utilizes an interleaved memory layout, which we define as a \textit{logical} Array of Structures (AoS). Although the data is stored in a flat \texttt{std::vector<float>} rather than a formal C++ \texttt{struct}, the memory footprint is identical to an interleaved layout where all components of a single data element (the RGB channels) are stored contiguously. 
-
-As defined in the Intel 64 and IA-32 Architectures Optimization Reference Manual \cite{intel_opt}, this layout is one where ``all the components of a single data element are stored contiguously in memory... often requiring de-interleaving for efficient SIMD processing.'' In our case, this contiguous grouping provides high spatial locality for single-pixel operations but introduces a stride-3 access pattern for individual color channels. This makes the loop difficult to auto-vectorize, as the CPU cannot load multiple values of the same channel into a SIMD register without expensive "gather" or "shuffle" instructions.
-
-
-
-To further optimize this baseline, we explicitly pre-compute the spatial coordinates $(x, y)$ and store them, rather than calculating them on-the-fly using modulo and division. This ensures that the baseline represents a "best-case" sequential version that is bound by memory access patterns rather than artificial computational overhead.
