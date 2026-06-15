@@ -223,7 +223,7 @@ As previously established, the SoA layout is a prerequisite for efficient SIMD o
 float xj = static_cast<float>(j % width);
 float yj = static_cast<float>(j / width);
 \end{lstlisting}
-\subsection{CUDA implementation}
+\subsection{CUDA implementation}\label{subsec:cuda_impl}
 On GPU architectures, memory coalescing is critical for throughput. A warp of 32 threads executes one global memory instruction at a time; if all 32 addresses fall within the same 128-byte cache line, the hardware issues a single coalesced transaction. With an AoS layout, each thread reads a 20-byte struct — the warp's addresses span 5 cache lines, requiring 5 transactions. With SoA, each thread reads a consecutive float — all 32 addresses fit in one cache line. The CUDA implementation therefore stores the five feature channels as separate device arrays, matching the SoA layout of \cref{subsec: SoA}. Conversion from the host AoS representation happens once at load time; all iteration data resides on the device.  The \textbf{Spatial Loop} is mapped to the CUDA grid (one thread per output pixel) following the same reasoning as the OpenMP parallelization (\cref{subsec:omp}). 
 
 \subsubsection{Tiled shared-memory}
@@ -356,37 +356,6 @@ Backend stalls/cycle & 4.98   & 4.71   & \textbf{5.06}   \\
 \end{figure}
 
 
-\begin{figure*}[t]
-    \centering
-    % First Subfigure
-    \begin{subfigure}[b]{0.32\textwidth}
-        \centering
-        \includegraphics[width=\linewidth]{images/fig_profile_l1_miss_count.png}
-        \caption{L1 Miss Count}
-        \label{fig:profile_l1_miss_count}
-    \end{subfigure}
-    \hfill
-    % Second Subfigure
-    \begin{subfigure}[b]{0.32\textwidth}
-        \centering
-        \includegraphics[width=\linewidth]{images/fig_profile_l1_loads.png}
-        \caption{L1 Loads}
-        \label{fig:profile_l1_loads}
-    \end{subfigure}
-    \hfill
-    % Third Subfigure
-    \begin{subfigure}[b]{0.32\textwidth}
-        \centering
-        \includegraphics[width=\linewidth]{images/fig_profile_instructions.png}
-        \caption{Instructions}
-        \label{fig:profile_instructions}
-    \end{subfigure}
-    
-    % Main Combined Caption
-    \caption{Comprehensive profile metrics including L1 cache misses, total loads, and instruction counts.}
-    \label{fig:profile_combined}
-\end{figure*}
-
 
 \subsection{Parallelization with OpenMP}
 Unlike the sequential optimizations, where the speedup was a constant factor independent of problem size, the parallel speedup introduces dependencies on both image resolution and bandwidth (\cref{fig:speedup_by_image}). Larger images achieve higher parallel efficiency, as the $\mathcal O(n^2)$ workload amortizes the fixed serial overhead of thread synchronization and reduction. The bandwidth, negligible in the sequential analysis, now has a measurable effect — particularly in the SoA-based parallel variant. This section examines each factor in turn, then discusses the scaling behavior with simultaneous multithreading.
@@ -414,14 +383,7 @@ For \texttt{omp}, bandwidth has no measurable effect . speedup is $\approx 11\ti
 \paragraph{SMT}
 Marginal gain from 12 to 24 threads ($\approx 11\times$ to $\approx 11.5\times$) confirms the workload is compute-bound on physical cores; hyperthreading only helps hide remaining pipeline stalls rather than adding throughput (see \S\cref{subsec:scaling_profiling} for the full hardware analysis).
 
-\begin{figure*}
-    \begin{center}
-        \centering
-        \includegraphics[width=\linewidth]{images/fig_speedup_by_image.png}
-        \caption{The near-linear scaling at 12 cores ($\approx 11\times$) confirms efficient parallelization, while SMT (24 threads) provides marginal additional benefit ($\approx 11.5\times$).}
-        \label{fig:speedup_by_image}
-    \end{center}
-\end{figure*}
+
 
 \begin{table}[htbp]
 \centering
@@ -443,12 +405,63 @@ Scenario & \texttt{omp} & \texttt{omp\_soa} & Faster \\
 
 As shown in Table~\ref{tab:omp_comparison}, the SoA SIMD advantage only pays off at small bandwidths. At large bandwidths, the extra instruction count and memory stream overhead dominate, making \texttt{omp} faster despite its better IPC and cache behavior. Overall, the parallelization achieves near-linear speedup ($\sim$11$\times$ at 12 cores), confirming the workload is embarrassingly parallel, while the choice of memory layout interacts with bandwidth in ways that do not affect parallel efficiency.
 
-
 \subsection{CUDA}
+The CUDA implementation was evaluated on the same benchmark matrix as the CPU variants. Numerical reproducibility across implementations was verified for the benchmark configuration: with a fixed number of iterations (max\_iter=5) and Jacobi semantics, all variants produce identical output images. Under full convergence to a tolerance, floating-point summation order could theoretically cause minor divergences near the rounding boundary (\cref{sec:conclusion}).
 
-\section{Conclusion}
+Performance-wise, the GPU results are shown in \cref{fig:gpu_layout_time}. A 2D kernel variant was also evaluated, but its negligible advantage confirms that the 2D grid offers no exploitable locality benefit: every pixel independently scans all N others, so thread position in the image does not affect memory access.
 
+\begin{figure*}[t]
+    \centering
+    % First Subfigure
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/fig_gpu_time_vs_pixels.png}
+        \caption{GPU Time vs Pixels}
+        \label{fig:gpu_time_vs_pixels}
+    \end{subfigure}
+    \hfill
+    % Second Subfigure
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/fig_gpu_layout_comparison.png}
+        \caption{GPU Layout Comparison}
+        \label{fig:gpu_layout_comparison}
+    \end{subfigure}
+    \hfill
+    
+    % Main Combined Caption
+    \caption{GPU execution time vs pixel count (left) and comparison between 1D and 2D grid layouts (right). At small resolutions the 1D grid is slightly faster due to simpler boundary handling; at large resolutions the 2D grid matches or marginally outperforms the 1D variant (~1.5\%), as the spatial decomposition better utilizes the GPU's scheduling resources.}
+    \label{fig:gpu_layout_time}
+\end{figure*}
+\paragraph{Speedup}
+\cref{fig:gpu_speedup_vs_cpu} shows the speedup of the CUDA implementation over the sequential and OpenMP variants. On the largest test images (tier 5, 68K pixels), the GPU reaches 203$\times$ speedup over \texttt{seq} and 17$\times$ over the best OpenMP variant. The speedup grows with image size: small images (tier 1, 6.7K pixels) underutilize the GPU, with shift times of only $\sim$3 ms per iteration, while larger images saturate the device's throughput.
+\begin{figure}
+    \includegraphics[width=\linewidth]{images/fig_gpu_speedup_vs_cpu.png}
+    \caption{GPU speedup over the best CPU variant (SoA) increases with image size, reaching up to $\sim$203$\times$ at the largest tier, reflecting the GPU's ability to amortize the $\mathcal O(n^2)$ workload across thousands of cores.}
+    \label{fig:gpu_speedup_vs_cpu}
+\end{figure}
+\paragraph{Sensitivity analysis}
+The kernel breakdown (\cref{fig:gpu_breakdown}) separates execution time into three components: \texttt{convert\_ms} (host conversion between AoS uint8 and SoA float, plus H2D and D2H PCIe transfers), \texttt{shift\_ms} (pure GPU kernel computation, measured via CUDA events), and the remaining overhead. For small images, \texttt{convert\_ms} dominates — the GPU is underutilized, limiting speedup. For large images, \texttt{shift\_ms} dominates, confirming the GPU is fully saturated and explaining why kernel launch overhead and block size have negligible impact, as shown in \cref{fig:gpu_block}. This compares execution times for block sizes 128, 256, and 512. All three produce nearly identical results, confirming that occupancy is not a bottleneck for this workload — the algorithm is bound by memory latency and arithmetic throughput rather than thread count. The GPU also exhibits bandwidth invariance consistent with the sequential analysis: execution time is independent of bandwidth for both the 1D and 2D variants, as expected for a brute-force O(n²) algorithm where the inner loop always scans all N pixels regardless of bandwidth. Additionally, the tile benchmark (without shared memory) shows that the tiling strategy provides approximately 2$\times$ speedup over a direct global-memory kernel on large images, validating the shared-memory optimization discussed in \cref{subsec:cuda_impl}.
 
+\begin{figure}
+    \includegraphics[width=1.05\linewidth]{images/fig_gpu_block_comparison.png}
+    \caption{Execution time for block sizes 128, 256, and 512, averaged across the 1D and 2D variants (2D variants sizes in parenthesis). All three are nearly identical, confirming occupancy is not the bottleneck.}
+    \label{fig:gpu_block}
+\end{figure}
+
+\begin{figure}
+    \includegraphics[width=\linewidth]{images/fig_gpu_kernel_breakdown.png}
+    \caption{For each image resolution, left bar is the 1D variant (\texttt{cuda}) and the right is the 2D one (\texttt{cuda\_2d}). }
+    \label{fig:gpu_breakdown}
+\end{figure}
+
+\section{Conclusion}\label{sec:conclusion}
+
+\paragraph{Numerical precision limitations}
+It should be noted that numerical reproducibility across implementations is not guaranteed. While Jacobi semantics ensures all variants read from the same snapshot at the start of each iteration, the accumulation of floating-point summations in different orders (sequential, OpenMP reduction, CUDA atomicMax) introduces path-dependent rounding errors. Over multiple iterations, these differences can compound and, in pixels near the uint8 rounding boundary, may produce divergent output values. For the benchmark configuration (max\_iter=5), the differences are negligible; for full convergence, they could theoretically shift a small fraction of pixels by one uint8 level.
+
+\paragraph{Future work}
+Future work can be focused on improving numerical consistency across parallel variants, or adopting a deterministic reduction strategy for the convergence check to guarantee identical iteration counts.
 
 %------------------------------------------------------------------------
 {\small
@@ -457,8 +470,49 @@ As shown in Table~\ref{tab:omp_comparison}, the SoA SIMD advantage only pays off
 }
 
 
+\begin{figure*}[t]
+	\centering
+	% First Subfigure
+	\begin{subfigure}[b]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{images/fig_profile_l1_miss_count.png}
+		\caption{L1 Miss Count}
+		\label{fig:profile_l1_miss_count}
+	\end{subfigure}
+	\hfill
+	% Second Subfigure
+	\begin{subfigure}[b]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{images/fig_profile_l1_loads.png}
+		\caption{L1 Loads}
+		\label{fig:profile_l1_loads}
+	\end{subfigure}
+	\hfill
+	% Third Subfigure
+	\begin{subfigure}[b]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{images/fig_profile_instructions.png}
+		\caption{Instructions}
+		\label{fig:profile_instructions}
+	\end{subfigure}
+	
+	% Main Combined Caption
+	\caption{Comprehensive profile metrics including L1 cache misses, total loads, and instruction counts.}
+	\label{fig:profile_combined}
+\end{figure*}
+
+\begin{figure*}
+	\begin{center}
+		\centering
+		\includegraphics[width=\linewidth]{images/fig_speedup_by_image.png}
+		\caption{The near-linear scaling at 12 cores ($\approx 11\times$) confirms efficient parallelization, while SMT (24 threads) provides marginal additional benefit ($\approx 11.5\times$).}
+		\label{fig:speedup_by_image}
+	\end{center}
+\end{figure*}
+
 \section{Appendix}\label{sec:appendix}
 \subsection{The Baseline algorithm}\label{subsec:baseline}
+
 \begin{lstlisting}[language=C++, caption={Sequential brute-force Mean Shift function}]
 meanShiftResult meanShiftBaseline(STBImage& image, float bandwidth,
                                   int max_iter, float tol, bool show_pbar, KernelFn kernel) {
