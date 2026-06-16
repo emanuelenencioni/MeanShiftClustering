@@ -64,7 +64,7 @@
 \if4cvprfinal\pagestyle{empty}\fi
 \begin{document}
 %%%%%%%%% TITLE
-\title{MeanShift: Analysis of speedup achieved through parallel programming on CPU and GPU}
+\title{Parallelizing Mean Shift Clustering: From SIMD Vectorization to GPU Acceleration}
 
 \author{Emanuele nencioni\\
 Department of Information Engineering
@@ -118,7 +118,7 @@ The implementation is developed in C++, selected for its ability to provide expl
 Lastly, OpenCV is utilized as a post-processing tool for data visualization and qualitative analysis of the segmentation boundaries.
 
 \section{Methodology}\label{sec:method}
-This current project will see different implementations designed specifically for three-channel RGB images, focusing on the standard 5D joint spatial-range domain. For a proper performance analysis, the basic form of the algorithm was first implemented using brute-force approach with sequential computation ( $\mathcal O(N^2)$). Then it follows a progressive optimization path to address specific bottlenecks:
+This section details different implementations designed specifically for three-channel RGB images, focusing on the standard 5D joint spatial-range domain. For a proper performance analysis, the basic form of the algorithm was first implemented using brute-force approach with sequential computation ( $\mathcal O(N^2)$). Then it follows a progressive optimization path to address specific bottlenecks:
 \begin{enumerate}
 \item \textbf{Refined Sequential Baseline (\texttt{seq})}, An optimized version designed to remove redundant ALU overhead by pre-computing spatial coordinates.
 \item \textbf{Structure of Arrays (\texttt{soa})}, A memory-reorganization approach aimed at improving data locality and helping SIMD auto-vectorization.
@@ -130,11 +130,11 @@ All the code of each implementation is available in the Appendix \ref{sec:append
 
 
 \subsection{Baseline implementation}
-First, the algorithm (see appendix \ref{subsec:baseline}) computes the mean shift vector of the neighbor centered on the current pixel, with a bandwidth $h$. The result is a vector directed towards the highest increase in the gradient of density function. Using a uniform kernel, this vector can be represented as a vector difference of the arithmetic average (or centroid) of all points in a 5D window  of a particular size $h$ minus the current point's location.  Then, each pixel's state is shifted according according to its mean shift vector to the local centroid. 
+First, the algorithm (see appendix \ref{subsec:baseline}) computes the mean shift vector of the neighbor centered on the current pixel, with a bandwidth $h$. The result is a vector directed towards the highest increase in the gradient of density function. Using a uniform kernel, this vector can be represented as a vector difference of the arithmetic average (or centroid) of all points in a 5D window  of a particular size $h$ minus the current point's location.  Then, each pixel's state is shifted according to its mean shift vector to the local centroid. 
 
 From a structural perspective, the baseline source code reveals a three-level nested loop hierarchy that dictates the algorithm's execution flow and computational complexity. The \textbf{Temporal Loop} (outermost) manages the iterative refinement process; it will execute the entire mean shift pipeline until convergence or a max number of iterations is reached. Within this, the \textbf{Spatial loop} iterates through the $N$ pixels of the images, treating each one as an independent agent seeking a local density mode. Finally, the \textbf{Neighbor loop} queries all N pixels in the image to compute the mean-shift vector and the kernel calculation. The interaction between these two inner loops generates the quadratic $\mathcal O(N^2)$.
 
-This method utilizes an interleaved memory layout, which can be defined as a \textit{logical} Array of Structures (AoS) (\cref{code:aos_impl}). Although the data are stored in a flat \texttt{std::vector<float>} rather than a formal C++ \texttt{struct}, the memory footprint is identical to an interleaved layout where all components of a single data element (the RGB channels) are stored contiguously ($[R_0,G_0,B_0,R_1,G_1,B_1,…]$). This often requires de-interleaving for efficient SIMD processing. In this case, this contiguous grouping provides high spatial locality for single-pixel operations, but introduces a stride-3 access pattern for individual color channels. This makes the loop difficult to auto-vectorize.
+This method utilizes an interleaved memory layout, which can be defined as a \textit{logical} Array of Structures (AoS) (\cref{code:aos_impl}). Although the data are stored in a flat \texttt{std::vector<float>} rather than a formal C++ \texttt{struct}, the memory footprint is identical to an interleaved layout where all components of a single data element (the RGB channels) are stored contiguously ($[R_0,G_0,B_0,R_1,G_1,B_1,…]$). In this case, this contiguous grouping provides high spatial locality for single-pixel operations, but introduces a stride-3 access pattern for individual color channels.
 
 \begin{lstlisting}[language=C++, caption={baseline Image implementation}, label={code:aos_impl}]
 struct STBImage {
@@ -165,7 +165,7 @@ In the previously described AoS layout, each pixel is represented by a contiguou
 To mitigate these limitations, the Structure of Arrays (SoA) implementation reorganizes the memory layout by decomposing the feature vectors into five independent contiguous arrays $(V_R,V_G,V_B,V_x,V_y)$, each of size N ( \cref{code:soa_impl_with_neigh_acc}). This architectural shift provides two primary advantages:
 \begin{enumerate}
 \item \textbf{SIMD Vectorization}, the SoA layout is inherently "SIMD-friendly." Because values of the same dimension are stored contiguously, the compiler can leverage SIMD extensions,  to load and process eight pixels simultaneously in a single 256-bit register. This can eliminate the need for expensive shuffle or de-interleaving instructions required by the AoS layout.
-\item \textbf{Unit-Stride Memory Access}, by ensuring that data are accessed with a stride of one, the implementation can maximize cache-line utilization. When the processor fetches a cache line, it retrieves multiple relevant values for a single dimension, reducing the total number of memory requests and improving overall throughput.
+\item \textbf{Unit-Stride Memory Access}, by ensuring that data are accessed with a stride of one, the implementation can maximize cache-line utilization. When the processor fetches a cache line, it retrieves multiple relevant values for a single dimension. This can reduce the total number of memory requests and improve overall throughput.
 \end{enumerate}
 The transition from the interleaved \texttt{stb\_image} format to this SoA representation is handled during the initialization phase. 
 
@@ -211,12 +211,12 @@ for(; iter < max_iter; ++iter) {
 \end{lstlisting}
 
 \subsection{\textit{omp\_soa} implementation}
-The final refinement of the algorithm integrates the Structure of Arrays (SoA) memory layout with OpenMP multithreading. This version represents the most optimized form of the Mean Shift implementation, as it addresses both computational throughput and memory bandwidth efficiency.
+The final refinement of the algorithm integrates the Structure of Arrays (SoA) memory layout with OpenMP multithreading.
 
 \subsubsection{Data locality and thread efficiency}
-In the standard OpenMP implementation using an AoS layout, each thread must load interleaved R, G, and B values into registers. By switching to SoA, each thread now accesses contiguous blocks of memory for each color channel. This enables significantly improves the cache hit rate during the parallel spatial loop.
+In the standard OpenMP implementation using an AoS layout, each thread must load interleaved R, G, and B values into registers. By switching to SoA, each thread now accesses contiguous blocks of memory for each color channel. This can significantly improves the cache hit rate during the parallel spatial loop.
 
-The spatial locality is maximized due to the separation of the feature space components into large, independent arrays. This reduces memory bandwidth bottlenecks and keeps the execution units saturated.
+The spatial locality is maximized due to the separation of the feature space components into large, independent arrays. This can reduces memory bandwidth bottlenecks and keeps the execution units saturated.
 
 As previously established, the SoA layout is a prerequisite for efficient SIMD operations; consequently, this contiguous memory access enables each individual core to directly leverage vector instructions.
 
@@ -312,7 +312,7 @@ Lastly, the absolute gap between baseline and optimized variants (\texttt{seq} a
 
 
 \subsubsection{Some deeper analysis} \label{subsubsec:profiling}
-As shown in \cref{fig:aos_soa}, one might expect execution time to scale with the theoretical search volume when $h=100$; however the execution time does not scale linearly with the search volume. The $\mathcal O(N^2)$ 5D distance computation dominates (95-98\% of cycles), and the bandwidth only controls the branch-taken rate of the accumulator (2-5\%) this because the brute force inner loop iterates over all N pixels regardless of bandwidth, computing the full 5D distance. The bottleneck is therefore the quadratic distance computation (flat kernel), confirming the parallelization strategy is correctly targeted. The \texttt{perf} hardware-counter data sheds further light on how each memory
+As shown in \cref{fig:aos_soa}, the execution time can be expected to scale with the theoretical search volume when $h=100$; however the execution time does not scale linearly with the search volume. The $\mathcal O(N^2)$ 5D distance computation dominates (95-98\% of cycles), and the bandwidth only controls the branch-taken rate of the accumulator (2-5\%) this because the brute force inner loop iterates over all N pixels regardless of bandwidth, computing the full 5D distance. The bottleneck is therefore the quadratic distance computation (flat kernel), confirming the parallelization strategy is correctly targeted. The \texttt{perf} hardware-counter data sheds further light on how each memory
 layout achieves its throughput at the microarchitectural level.
 As shown in \cref{tab:performance_comparison}, the per-instruction metrics produce a counter-intuitive picture: the \texttt{soa} implementation exhibits a higher L1\,D-cache miss rate and a lower IPC than both \texttt{seq} and \texttt{baseline}. Taken in isolation, these figures would suggest that the SoA memory layout is \emph{detrimental} to cache behavior. However, inspecting the raw counter values reveals that this interpretation is incorrect. As \cref{fig:profile_l1_miss_count} shows, the \emph{absolute} number of L1\,D-cache misses is virtually identical across all three implementations $\approx 294\,\text{M}$). The elevated miss \emph{rate} is therefore an arithmetic artifact rather than a sign of additional cache pressure. The root cause is visible in \cref{fig:profile_l1_loads,fig:profile_instructions}:
 the \texttt{soa} implementation issues approximately $3\times$ fewer load operations
@@ -335,7 +335,7 @@ correct metrics to compare implementations under vectorisation are the
 slots --- all of which show \texttt{soa} as the clear winner. The cycle-level data confirms that this workload is bound by L1 cache hit latency and instruction retirement throughput rather than main-memory bandwidth — consistent with the bandwidth invariance analysis above.
 \begin{table}[htbp]
 \centering
-\caption{Sequential implementations profiling comparison}
+\caption{Sequential implementations profiling comparison. Worst results in bold.}
 \label{tab:performance_comparison}
 \begin{tabular}{l c c c}
 \toprule
@@ -1160,7 +1160,7 @@ The execution time of each brute-force variant is modeled as $T = C \times n^2 \
     \item \textbf{ALU operations}, 5D squared distance (14 FLOP) + kernel comparison + conditional accumulation,
     \item \textbf{overhead}, loop control, integer division/modulo (baseline only), pipeline stalls.
 \end{itemize}
-Empirical values derived from benchmarks: $C_{\text{baseline}} \approx 1.98$, $C_{\text{seq}} \approx 1.75$, $C_{\text{soa}} \approx 0.68$ (ns or cycles per pixel-pair). The ratio $C_{\text{baseline}} / C_{\text{soa}} \approx 2.93$ confirms that SoA's SIMD vectorization processes multiple pixels per instruction, while the constant speedup across resolutions follows from the $n^2$ cancellation — the same analysis referenced in \cref{subsubsec:profiling}.
+Empirical values derived from benchmarks: $C_{\text{baseline}} \approx 1.98$, $C_{\text{seq}} \approx 1.75$, $C_{\text{soa}} \approx 0.68$ (ns or cycles per pixel-pair). The ratio $C_{\text{baseline}} / C_{\text{soa}} \approx 2.93$ confirms that SoA's SIMD vectorization processes multiple pixels per instruction, while the constant speedup across resolutions follows from the cancellation of the $n^2$ term — the same analysis referenced in \cref{subsubsec:profiling}.
 
 \subsection{Scaling profiling}\label{subsec:scaling_profiling}
 Profiling was conducted via \texttt{perf stat} on two images (100$\times$67 and 150$\times$100) for both \texttt{omp} and \texttt{omp\_soa} at thread count 1,2,4,8,12 and 24, with 3 runs per configuration. Measured events included cycles, instructions, L1 data cache loads and misses, and backend stalls.
