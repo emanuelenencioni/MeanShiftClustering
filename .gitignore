@@ -23,7 +23,6 @@ results/*.log
 BSD500
 Images/*.png
 Images/*.log
-*.csv
 Images/*
 # LaTeX compilation output
 *.aux
