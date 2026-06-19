@@ -111,12 +111,6 @@ All measurements on an AMD Ryzen 9 9900X (12 cores) + GTX 1060 (CUDA), 68K-pixel
 ├── BSD500/                 # Original dataset
 ├── docs/                   # Documentation and analysis
 │   ├── latex/main.tex      # Final report
-│   ├── SoA_analysis.md
-│   ├── parallelization.md
-│   ├── kernel_dispatch.md
-│   ├── cuda_analysis.md
-│   ├── cost_model.md
-│   └── scaling_profiling.md
 └── results/                # Benchmark CSVs
 ```
 
